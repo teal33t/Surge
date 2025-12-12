@@ -7,7 +7,12 @@ import (
 
 	"surge/internal/downloader"
 
+	"surge/internal/messages"
+	"surge/internal/tui"
+
 	"github.com/spf13/cobra"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var getCmd = &cobra.Command{
@@ -30,19 +35,42 @@ var getCmd = &cobra.Command{
 		d := downloader.NewDownloader()
 		ctx := context.Background()
 
-		fmt.Printf("Downloading %s to %s...\n", url, outPath)
-		err := d.Download(ctx, url, outPath, concurrent, verbose, md5sum, sha256sum)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error downloading file: %v\n", err)
+		// Initialize Bubble Tea program
+		p := tea.NewProgram(tui.InitialRootModel(), tea.WithAltScreen())
+
+		// Create a channel for progress updates
+		progressCh := make(chan tea.Msg, DefaultProgressChannelBuffer)
+		d.SetProgressChan(progressCh)
+		d.SetID(1) // Single download for now
+
+		// Start a goroutine to pump messages from channel to program
+		go func() {
+			for msg := range progressCh {
+				p.Send(msg)
+			}
+		}()
+
+		// Start download in a goroutine
+		go func() {
+			defer close(progressCh)
+			// fmt.Printf("Downloading %s to %s...\n", url, outPath) // Removed printing to stdout to rely on TUI
+			err := d.Download(ctx, url, outPath, concurrent, verbose, md5sum, sha256sum)
+			if err != nil {
+				p.Send(messages.DownloadErrorMsg{DownloadID: 1, Err: err})
+			}
+		}()
+
+		// Run the TUI
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Download complete!")
 	},
 }
 
 func init() {
 	getCmd.Flags().StringP("path", "p", "", "the path to the download folder")
-	getCmd.Flags().IntP("concurrent", "c", 1, "number of concurrent connections (1 = single thread)")
+	getCmd.Flags().IntP("concurrent", "c", DefaultConcurrentConnections, "number of concurrent connections (1 = single thread)")
 	getCmd.Flags().BoolP("verbose", "v", false, "enable verbose output")
 	getCmd.Flags().String("md5", "", "MD5 checksum for verification")
 	getCmd.Flags().String("sha256", "", "SHA256 checksum for verification")

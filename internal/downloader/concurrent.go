@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"surge/internal/utils"
+
+	"surge/internal/messages"
 )
 
 const (
@@ -31,6 +33,15 @@ const (
 
 	// Connection limits
 	PerHostMax = 8 // Max concurrent connections per host
+
+	// HTTP Client Tuning
+	DefaultMaxIdleConns          = 100
+	DefaultIdleConnTimeout       = 90 * time.Second
+	DefaultTLSHandshakeTimeout   = 10 * time.Second
+	DefaultResponseHeaderTimeout = 15 * time.Second
+	DefaultExpectContinueTimeout = 1 * time.Second
+	DialTimeout                  = 10 * time.Second
+	KeepAliveDuration            = 30 * time.Second
 )
 
 // Buffer pool to reduce GC pressure
@@ -163,6 +174,8 @@ func (q *TaskQueue) SplitLargestIfNeeded() bool {
 
 // getInitialConnections returns the starting number of connections based on file size
 func getInitialConnections(fileSize int64) int {
+	// TODO: Use binary search to find optimal number of connections?
+	// TODO: Use a better algorithm to find optimal number of connections?
 	switch {
 	case fileSize < 10*MB:
 		return 1
@@ -214,15 +227,15 @@ func createTasks(fileSize, chunkSize int64) []Task {
 func newConcurrentClient() *http.Client {
 	transport := &http.Transport{
 		// Connection pooling
-		MaxIdleConns:        100,
+		MaxIdleConns:        DefaultMaxIdleConns,
 		MaxIdleConnsPerHost: PerHostMax + 2, // Slightly more than max to handle bursts
 		MaxConnsPerHost:     PerHostMax,
 
 		// Timeouts to prevent hung connections
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       DefaultIdleConnTimeout,
+		TLSHandshakeTimeout:   DefaultTLSHandshakeTimeout,
+		ResponseHeaderTimeout: DefaultResponseHeaderTimeout,
+		ExpectContinueTimeout: DefaultExpectContinueTimeout,
 
 		// Performance tuning
 		DisableCompression: true, // Files are usually already compressed
@@ -230,8 +243,8 @@ func newConcurrentClient() *http.Client {
 
 		// Dial settings for TCP reliability
 		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   DialTimeout,
+			KeepAlive: KeepAliveDuration,
 		}).DialContext,
 	}
 
@@ -272,6 +285,16 @@ func (d *Downloader) concurrentDownload(ctx context.Context, rawurl, outPath str
 	fileSize, err := strconv.ParseInt(contentLength, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid Content-Length: %w", err)
+	}
+
+	if d.ProgressChan != nil {
+		filename, _, _ := utils.DetermineFilename(rawurl, resp, false)
+		d.ProgressChan <- messages.DownloadStartedMsg{
+			DownloadID: d.ID,
+			URL:        rawurl,
+			Filename:   filename,
+			Total:      fileSize,
+		}
 	}
 
 	// 3. Determine connections and chunk size
@@ -376,6 +399,16 @@ func (d *Downloader) concurrentDownload(ctx context.Context, rawurl, outPath str
 		utils.ConvertBytesToHumanReadable(fileSize),
 		elapsed.Round(time.Millisecond),
 		utils.ConvertBytesToHumanReadable(int64(speed)))
+
+	if d.ProgressChan != nil {
+		filename, _, _ := utils.DetermineFilename(rawurl, resp, false)
+		d.ProgressChan <- messages.DownloadCompleteMsg{
+			DownloadID: d.ID,
+			Filename:   filename,
+			Elapsed:    elapsed,
+			Total:      fileSize,
+		}
+	}
 
 	return nil
 }
