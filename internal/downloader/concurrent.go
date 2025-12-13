@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -285,6 +286,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, outPath str
 	// 1. HEAD request to get file size
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawurl, nil)
 	if err != nil {
+		utils.Debug("Failed to create HEAD request: %v", err)
 		return err
 	}
 
@@ -294,19 +296,24 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, outPath str
 
 	resp, err := client.Do(req)
 	if err != nil {
+		utils.Debug("Failed to perform HEAD request: %v", err)
 		return err
 	}
-	resp.Body.Close()
 
 	// 2. Get file size
 	contentLength := resp.Header.Get("Content-Length")
 	fileSize, err := strconv.ParseInt(contentLength, 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid Content-Length: %w", err)
+		utils.Debug("Failed to parse Content-Length: %v", err)
+		return err
 	}
 
+	// 3. Determine filename and output path
+	filename, _, _ := utils.DetermineFilename(rawurl, resp, false)
+	resp.Body.Close()
+
+	// Send download started message
 	if d.ProgressChan != nil {
-		filename, _, _ := utils.DetermineFilename(rawurl, resp, false)
 		d.ProgressChan <- messages.DownloadStartedMsg{
 			DownloadID: d.ID,
 			URL:        rawurl,
@@ -314,8 +321,17 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, outPath str
 			Total:      fileSize,
 		}
 	}
+	utils.Debug("Download Started Message sent and filename is %s ", filename)
 
-	// 3. Determine connections and chunk size
+	// Construct proper output path
+	destPath := outPath
+	if info, err := os.Stat(outPath); err == nil && info.IsDir() {
+		destPath = filepath.Join(outPath, filename)
+	}
+
+	utils.Debug("Output path is %s", destPath)
+
+	// 4. Determine connections and chunk size
 	numConns := getInitialConnections(fileSize)
 	chunkSize := calculateChunkSize(fileSize, numConns)
 
@@ -326,8 +342,8 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, outPath str
 			utils.ConvertBytesToHumanReadable(chunkSize))
 	}
 
-	// 4. Create and preallocate output file
-	outFile, err := os.Create(outPath)
+	// 5. Create and preallocate output file
+	outFile, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
@@ -431,6 +447,118 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, outPath str
 	return nil
 }
 
+// DownloadWithMetadata downloads using pre-probed metadata (no internal probe needed)
+func (d *ConcurrentDownloader) DownloadWithMetadata(ctx context.Context, rawurl, destPath string, fileSize int64, verbose bool, md5sum, sha256sum string) error {
+	utils.Debug("ConcurrentDownloader.DownloadWithMetadata: %s -> %s (size: %d)", rawurl, destPath, fileSize)
+
+	// Create tuned HTTP client for concurrent downloads
+	client := newConcurrentClient()
+
+	// Determine connections and chunk size
+	numConns := getInitialConnections(fileSize)
+	chunkSize := calculateChunkSize(fileSize, numConns)
+
+	if verbose {
+		fmt.Printf("File size: %s, connections: %d, chunk size: %s\n",
+			utils.ConvertBytesToHumanReadable(fileSize),
+			numConns,
+			utils.ConvertBytesToHumanReadable(chunkSize))
+	}
+
+	// Create and preallocate output file
+	outFile, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer outFile.Close()
+
+	// Preallocate file to avoid fragmentation
+	if err := outFile.Truncate(fileSize); err != nil {
+		return fmt.Errorf("failed to preallocate file: %w", err)
+	}
+
+	// Create task queue
+	tasks := createTasks(fileSize, chunkSize)
+	queue := NewTaskQueue()
+	queue.PushMultiple(tasks)
+
+	// Progress tracking
+	var totalDownloaded int64
+	startTime := time.Now()
+
+	// Start balancer goroutine for dynamic chunk splitting
+	balancerCtx, cancelBalancer := context.WithCancel(ctx)
+	defer cancelBalancer()
+
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		maxSplits := 50
+		splitCount := 0
+
+		for {
+			select {
+			case <-balancerCtx.Done():
+				return
+			case <-ticker.C:
+				if queue.IdleWorkers() > 0 && splitCount < maxSplits {
+					if queue.SplitLargestIfNeeded() {
+						splitCount++
+						if verbose {
+							fmt.Fprintf(os.Stderr, "\n[Balancer] Split task (total splits: %d)\n", splitCount)
+						}
+					}
+				}
+			}
+		}
+	}()
+
+	// Start workers
+	var wg sync.WaitGroup
+	workerErrors := make(chan error, numConns)
+
+	for i := 0; i < numConns; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			err := d.worker(ctx, workerID, rawurl, outFile, queue, &totalDownloaded, fileSize, startTime, verbose, client)
+			if err != nil {
+				workerErrors <- err
+			}
+		}(i)
+	}
+
+	// Wait for all workers to complete
+	go func() {
+		wg.Wait()
+		close(workerErrors)
+		queue.Close()
+	}()
+
+	// Check for errors
+	for err := range workerErrors {
+		if err != nil {
+			return err
+		}
+	}
+
+	// Final sync
+	if err := outFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+
+	// Print final stats
+	elapsed := time.Since(startTime)
+	speed := float64(fileSize) / elapsed.Seconds()
+	fmt.Fprintf(os.Stderr, "\nDownloaded %s in %s (%s/s)\n",
+		utils.ConvertBytesToHumanReadable(fileSize),
+		elapsed.Round(time.Millisecond),
+		utils.ConvertBytesToHumanReadable(int64(speed)))
+
+	return nil
+}
+
 // worker downloads tasks from the queue
 func (d *ConcurrentDownloader) worker(ctx context.Context, id int, rawurl string, file *os.File, queue *TaskQueue, downloaded *int64, totalSize int64, startTime time.Time, verbose bool, client *http.Client) error {
 	// Get pooled buffer
@@ -445,8 +573,19 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, rawurl string
 			return nil // Queue closed, no more work
 		}
 
+		// Update active workers
+		if d.State != nil {
+			d.State.ActiveWorkers.Add(1)
+		}
+
 		// Download this task
 		err := d.downloadTask(ctx, rawurl, file, task, buf, downloaded, totalSize, startTime, verbose, client)
+
+		// Update active workers
+		if d.State != nil {
+			d.State.ActiveWorkers.Add(-1)
+		}
+
 		if err != nil {
 			// On error, push task back for retry (could add retry limit)
 			queue.Push(task)
@@ -490,6 +629,9 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 
 			// Update progress
 			atomic.AddInt64(downloaded, int64(n))
+			if d.State != nil {
+				d.State.Downloaded.Add(int64(n))
+			}
 		}
 		if readErr == io.EOF {
 			break

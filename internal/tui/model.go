@@ -10,12 +10,12 @@ import (
 	"surge/internal/downloader"
 )
 
-type UIState int
+type UIState int //Defines UIState as int to be used in rootModel
 
 const (
-	DashboardState UIState = iota
-	InputState
-	DetailState
+	DashboardState UIState = iota //DashboardState is 0 increments after each line
+	InputState                    //InputState is 1
+	DetailState                   //DetailState is 2
 )
 
 type DownloadModel struct {
