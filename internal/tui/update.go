@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"context"
 	"time"
 
 	"surge/internal/downloader"
 	"surge/internal/messages"
+	"surge/internal/utils"
 
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
@@ -161,11 +161,29 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = DashboardState
 
 				// Create download with state and reporter
-				nextID := len(m.downloads) + 1
-				newDownload := NewDownloadModel(nextID, url, "Resolving...", 0)
+				nextID := len(m.downloads) + 1 // FIXME: proper UUIDs? This could lead to unexpected problems!!!
+				newDownload := NewDownloadModel(nextID, url, "Queued", 0)
 				m.downloads = append(m.downloads, newDownload)
 
-				return m, StartDownloadCmd(m.progressChan, nextID, url, path, newDownload.state)
+				// Create config
+				cfg := downloader.DownloadConfig{
+					URL:        url,
+					OutputPath: path,
+					ID:         nextID,
+					Verbose:    false,
+					ProgressCh: m.progressChan,
+					State:      newDownload.state,
+				}
+
+				utils.Debug("Adding to Queue")
+
+				m.Queue.Add(cfg)
+
+				utils.Debug("Processing Queue")
+
+				go m.Queue.ProcessQueue()
+
+				return m, nil
 			}
 
 			// Up/Down navigation between inputs
@@ -200,34 +218,4 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
-}
-
-func StartDownloadCmd(sub chan tea.Msg, id int, url, path string, state *downloader.ProgressState) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		go func() {
-			cfg := downloader.DownloadConfig{
-				URL:        url,
-				OutputPath: path,
-				ID:         id,
-				Verbose:    false,
-				MD5Sum:     "",
-				SHA256Sum:  "",
-				ProgressCh: sub,
-				State:      state,
-			}
-
-			err := downloader.TUIDownload(ctx, cfg)
-			if err != nil {
-				state.SetError(err)
-				sub <- messages.DownloadErrorMsg{DownloadID: id, Err: err}
-				return
-			} else {
-				state.Done.Store(true)
-				sub <- messages.DownloadCompleteMsg{DownloadID: id, Elapsed: time.Since(state.StartTime), Total: state.TotalSize}
-			}
-		}()
-
-		return nil
-	}
 }

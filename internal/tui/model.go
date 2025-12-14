@@ -51,6 +51,9 @@ type RootModel struct {
 
 	// Navigation
 	cursor int
+
+	// Download Queue
+	Queue *downloader.DownloadQueue
 }
 
 // NewDownloadModel creates a new download model with progress state and reporter
@@ -92,6 +95,7 @@ func InitialRootModel() RootModel {
 		inputs:       []textinput.Model{urlInput, pathInput, filenameInput},
 		state:        DashboardState,
 		progressChan: make(chan tea.Msg, ProgressChannelBuffer),
+		Queue:        downloader.NewDownloadQueue(),
 	}
 }
 

@@ -110,6 +110,8 @@ func renderCard(d *DownloadModel, selected bool, width int) string {
 	stats := fmt.Sprintf("Speed: %.1f MB/s | ETA: %s | %.0f%%", d.Speed/Megabyte, eta, pct*100)
 	if d.done {
 		stats = fmt.Sprintf("Completed | Size: %s", utils.ConvertBytesToHumanReadable(d.Total))
+	} else if d.Speed == 0 && d.Downloaded == 0 {
+		stats = "Status: Queued"
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left,

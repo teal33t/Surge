@@ -125,6 +125,7 @@ func extractFilename(rawurl string, resp *http.Response) string {
 
 // TUIDownload is the main entry point for TUI downloads
 func TUIDownload(ctx context.Context, cfg DownloadConfig) error {
+
 	// Probe server once to get all metadata
 	probe, err := probeServer(ctx, cfg.URL)
 	if err != nil {
