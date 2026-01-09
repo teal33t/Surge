@@ -211,7 +211,7 @@ func getInitialConnections(fileSize int64) int {
 	case fileSize < 1*GB:
 		return 6
 	default:
-		return 16
+		return 32
 	}
 }
 
@@ -687,6 +687,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 			}
 
 			now := time.Now()
+			oldOffset := offset
 			offset += int64(readSoFar)
 			atomic.StoreInt64(&activeTask.CurrentOffset, offset)
 			atomic.AddInt64(&activeTask.WindowBytes, int64(readSoFar))
@@ -708,9 +709,18 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 				activeTask.WindowStart = now // Reset window
 			}
 
-			// Update progress via shared state only (removed duplicate tracking)
+			// Update progress via shared state, clamping to StopAt boundary
+			// to avoid double-counting bytes when work is stolen
 			if d.State != nil {
-				d.State.Downloaded.Add(int64(readSoFar))
+				currentStopAt := atomic.LoadInt64(&activeTask.StopAt)
+				effectiveEnd := offset
+				if effectiveEnd > currentStopAt {
+					effectiveEnd = currentStopAt
+				}
+				contributed := effectiveEnd - oldOffset
+				if contributed > 0 {
+					d.State.Downloaded.Add(contributed)
+				}
 			}
 		}
 
@@ -838,6 +848,16 @@ func (d *ConcurrentDownloader) checkWorkerHealth() {
 
 		// Skip workers that are still in their grace period
 		if taskDuration < slowWorkerGrace {
+			continue
+		}
+
+		// Check for stalled worker (no activity for stallTimeout)
+		lastActivity := time.Unix(0, active.LastActivity)
+		if now.Sub(lastActivity) > stallTimeout {
+			utils.Debug("Health: Worker %d stalled (no activity for %v), cancelling", workerID, now.Sub(lastActivity))
+			if active.Cancel != nil {
+				active.Cancel()
+			}
 			continue
 		}
 

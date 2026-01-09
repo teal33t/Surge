@@ -29,7 +29,7 @@ const (
 
 // Connection limits
 const (
-	PerHostMax = 16 // Max concurrent connections per host
+	PerHostMax = 64 // Max concurrent connections per host
 )
 
 // HTTP Client Tuning
@@ -67,9 +67,10 @@ const (
 	retryBaseDelay = 200 * time.Millisecond
 
 	// Health check constants
-	healthCheckInterval = 2 * time.Second // How often to check worker health
-	slowWorkerThreshold = 0.30            // Restart if speed < x times of mean
+	healthCheckInterval = 1 * time.Second // How often to check worker health
+	slowWorkerThreshold = 0.50            // Restart if speed < x times of mean
 	slowWorkerGrace     = 5 * time.Second // Grace period before checking speed
-	speedEMAAlpha       = 0.2             // EMA smoothing factor
+	stallTimeout        = 5 * time.Second // Restart if no data for x seconds
+	speedEMAAlpha       = 0.3             // EMA smoothing factor
 	minAbsoluteSpeed    = 100 * KB        // Don't cancel workers above this speed
 )
