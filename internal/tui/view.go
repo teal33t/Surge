@@ -153,7 +153,7 @@ func (m RootModel) View() string {
 
 	// --- SECTION 3: DOWNLOAD LIST (Bottom Left) ---
 	// Tab Bar
-	tabBar := renderTabs(m.activeTab)
+	tabBar := renderTabs(m.activeTab, active, queued, downloaded)
 
 	// Render the bubbles list or centered empty message
 	var listContent string
