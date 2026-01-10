@@ -197,7 +197,7 @@ func InitialRootModel() RootModel {
 		list:           downloadList,
 		Pool:           downloader.NewWorkerPool(progressChan),
 		PWD:            pwd,
-		SpeedHistory:   make([]float64, 40), // 40 points of history
+		SpeedHistory:   make([]float64, 200), // 200 points of history to fill wide screens
 	}
 }
 

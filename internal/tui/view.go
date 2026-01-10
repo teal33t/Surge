@@ -226,8 +226,15 @@ func (m RootModel) View() string {
 	currentSpeedStr := fmt.Sprintf("Current: %.2f MB/s", currentSpeed)
 
 	// Final Assembly for the box
-	speedContent := lipgloss.JoinVertical(lipgloss.Right,
-		lipgloss.NewStyle().Foreground(ColorNeonPink).Bold(true).Render(currentSpeedStr),
+	// Title right-aligned with full width, content left-aligned so Y-axis sticks to left border
+	titleStyle := lipgloss.NewStyle().
+		Width(rightWidth - 4).
+		Align(lipgloss.Right).
+		Foreground(ColorNeonPink).
+		Bold(true)
+
+	speedContent := lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Render(currentSpeedStr),
 		"", // Spacer line
 		fullGraphRow,
 	)
