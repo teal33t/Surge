@@ -35,15 +35,17 @@ type ConcurrentDownloader struct {
 	activeMu     sync.Mutex
 	URL          string // For pause/resume
 	DestPath     string // For pause/resume
+	Runtime      *RuntimeConfig
 }
 
 // NewConcurrentDownloader creates a new concurrent downloader with all required parameters
-func NewConcurrentDownloader(id int, progressCh chan<- tea.Msg, state *ProgressState) *ConcurrentDownloader {
+func NewConcurrentDownloader(id int, progressCh chan<- tea.Msg, state *ProgressState, runtime *RuntimeConfig) *ConcurrentDownloader {
 	return &ConcurrentDownloader{
 		ID:           id,
 		ProgressChan: progressCh,
 		State:        state,
 		activeTasks:  make(map[int]*ActiveTask),
+		Runtime:      runtime,
 	}
 }
 
@@ -202,30 +204,47 @@ func (q *TaskQueue) SplitLargestIfNeeded() bool {
 }
 
 // getInitialConnections returns the starting number of connections based on file size
-func getInitialConnections(fileSize int64) int {
+func (d *ConcurrentDownloader) getInitialConnections(fileSize int64) int {
+	maxConns := d.Runtime.GetMaxConnectionsPerHost()
+
+	var recConns int
 	switch {
 	case fileSize < 10*MB:
-		return 1
+		recConns = 1
 	case fileSize < 100*MB:
-		return 4
+		recConns = 4
 	case fileSize < 1*GB:
-		return 6
+		recConns = 6
 	default:
-		return 32
+		recConns = 32
 	}
+
+	if recConns > maxConns {
+		return maxConns
+	}
+	return recConns
 }
 
 // calculateChunkSize determines optimal chunk size
-func calculateChunkSize(fileSize int64, numConns int) int64 {
+func (d *ConcurrentDownloader) calculateChunkSize(fileSize int64, numConns int) int64 {
 	targetChunks := int64(numConns * TasksPerWorker)
 	chunkSize := fileSize / targetChunks
 
-	// Clamp to min/max
-	if chunkSize < MinChunk {
-		chunkSize = MinChunk
+	// Clamp to min/max from config
+	minChunk := d.Runtime.GetMinChunkSize()
+	maxChunk := d.Runtime.GetMaxChunkSize()
+	targetChunk := d.Runtime.GetTargetChunkSize()
+
+	// If calculating produces something wild, prefer target
+	if chunkSize == 0 {
+		chunkSize = targetChunk
 	}
-	if chunkSize > MaxChunk {
-		chunkSize = MaxChunk
+
+	if chunkSize < minChunk {
+		chunkSize = minChunk
+	}
+	if chunkSize > maxChunk {
+		chunkSize = maxChunk
 	}
 
 	// Align to 4KB
@@ -251,9 +270,9 @@ func createTasks(fileSize, chunkSize int64) []Task {
 }
 
 // newConcurrentClient creates an http.Client tuned for concurrent downloads
-func newConcurrentClient(numConns int) *http.Client {
+func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 	// Ensure we have enough connections per host
-	maxConns := PerHostMax
+	maxConns := d.Runtime.GetMaxConnectionsPerHost()
 	if numConns > maxConns {
 		maxConns = numConns
 	}
@@ -304,11 +323,11 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, destPath st
 	}
 
 	// Determine connections and chunk size
-	numConns := getInitialConnections(fileSize)
-	chunkSize := calculateChunkSize(fileSize, numConns)
+	numConns := d.getInitialConnections(fileSize)
+	chunkSize := d.calculateChunkSize(fileSize, numConns)
 
 	// Create tuned HTTP client for concurrent downloads
-	client := newConcurrentClient(numConns)
+	client := d.newConcurrentClient(numConns)
 
 	if verbose {
 		fmt.Printf("File size: %s, connections: %d, chunk size: %s\n",
@@ -628,9 +647,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 
 	task := activeTask.Task
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "+
-		"AppleWebKit/537.36 (KHTML, like Gecko) "+
-		"Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", d.Runtime.GetUserAgent())
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1))
 
 	resp, err := client.Do(req)

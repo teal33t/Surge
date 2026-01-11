@@ -27,6 +27,24 @@ func notificationTickCmd() tea.Cmd {
 	})
 }
 
+// convertRuntimeConfig converts config.RuntimeConfig to downloader.RuntimeConfig
+func convertRuntimeConfig(rc *config.RuntimeConfig) *downloader.RuntimeConfig {
+	return &downloader.RuntimeConfig{
+		MaxConnectionsPerHost: rc.MaxConnectionsPerHost,
+		MaxGlobalConnections:  rc.MaxGlobalConnections,
+		UserAgent:             rc.UserAgent,
+		MinChunkSize:          rc.MinChunkSize,
+		MaxChunkSize:          rc.MaxChunkSize,
+		TargetChunkSize:       rc.TargetChunkSize,
+		WorkerBufferSize:      rc.WorkerBufferSize,
+		MaxTaskRetries:        rc.MaxTaskRetries,
+		SlowWorkerThreshold:   rc.SlowWorkerThreshold,
+		SlowWorkerGracePeriod: rc.SlowWorkerGracePeriod,
+		StallTimeout:          rc.StallTimeout,
+		SpeedEmaAlpha:         rc.SpeedEmaAlpha,
+	}
+}
+
 // addLogEntry adds a log entry to the log viewport
 func (m *RootModel) addLogEntry(msg string) {
 	timestamp := time.Now().Format("15:04:05")
@@ -83,6 +101,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Verbose:    false,
 			ProgressCh: m.progressChan,
 			State:      newDownload.state,
+			Runtime:    convertRuntimeConfig(m.Settings.ToRuntimeConfig()),
 		}
 
 		utils.Debug("Adding download from server: %s", msg.URL)
@@ -403,6 +422,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								Verbose:    false,
 								ProgressCh: m.progressChan,
 								State:      d.state,
+								Runtime:    convertRuntimeConfig(m.Settings.ToRuntimeConfig()),
 							}
 							m.Pool.Add(cfg)
 							// Restart polling
@@ -531,6 +551,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Verbose:    false,
 					ProgressCh: m.progressChan,
 					State:      newDownload.state,
+					Runtime:    convertRuntimeConfig(m.Settings.ToRuntimeConfig()),
 				}
 
 				utils.Debug("Adding to Queue")
@@ -656,6 +677,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Verbose:    false,
 					ProgressCh: m.progressChan,
 					State:      newDownload.state,
+					Runtime:    convertRuntimeConfig(m.Settings.ToRuntimeConfig()),
 				}
 				m.Pool.Add(cfg)
 				m.state = DashboardState
