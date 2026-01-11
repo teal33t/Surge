@@ -277,6 +277,13 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Check if a directory was selected
 			if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+				// Check if we were browsing for settings
+				if m.SettingsFileBrowsing {
+					m.Settings.General.DefaultDownloadDir = path
+					m.SettingsFileBrowsing = false
+					m.state = SettingsState
+					return m, nil
+				}
 				m.inputs[1].SetValue(path)
 				m.state = InputState
 				return m, nil
@@ -553,7 +560,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case FilePickerState:
 			if msg.String() == "esc" {
-				// Cancel and return to input state
+				// Cancel and return to appropriate state
+				if m.SettingsFileBrowsing {
+					m.SettingsFileBrowsing = false
+					m.state = SettingsState
+					return m, nil
+				}
 				m.state = InputState
 				return m, nil
 			}
@@ -567,6 +579,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// '.' to select current directory
 			if msg.String() == "." {
+				if m.SettingsFileBrowsing {
+					m.Settings.General.DefaultDownloadDir = m.filepicker.CurrentDirectory
+					m.SettingsFileBrowsing = false
+					m.state = SettingsState
+					return m, nil
+				}
 				m.inputs[1].SetValue(m.filepicker.CurrentDirectory)
 				m.state = InputState
 				return m, nil
@@ -578,6 +596,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Check if a directory was selected
 			if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+				if m.SettingsFileBrowsing {
+					m.Settings.General.DefaultDownloadDir = path
+					m.SettingsFileBrowsing = false
+					m.state = SettingsState
+					return m, nil
+				}
 				// Set the path input value and return to input state
 				m.inputs[1].SetValue(path)
 				m.state = InputState
@@ -706,6 +730,14 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.SettingsSelectedRow = 0
 				return m, nil
 			case "tab":
+				// Open file browser for default_download_dir, otherwise switch category
+				key := m.getCurrentSettingKey()
+				if key == "default_download_dir" {
+					m.SettingsFileBrowsing = true
+					m.state = FilePickerState
+					m.filepicker.CurrentDirectory = m.Settings.General.DefaultDownloadDir
+					return m, m.filepicker.Init()
+				}
 				m.SettingsActiveTab = (m.SettingsActiveTab + 1) % 4
 				m.SettingsSelectedRow = 0
 				return m, nil
@@ -752,15 +784,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				key := m.getCurrentSettingKey()
 				m.resetSettingToDefault(currentCategory, key, defaults)
 				return m, nil
-			case "tab":
-				// Open file browser for default_download_dir
-				key := m.getCurrentSettingKey()
-				if key == "default_download_dir" {
-					m.SettingsFileBrowsing = true
-					m.filepicker.CurrentDirectory = m.Settings.General.DefaultDownloadDir
-					return m, m.filepicker.Init()
-				}
-				return m, nil
+
 			}
 			return m, nil
 		}

@@ -362,3 +362,53 @@ func formatSettingValue(value interface{}, typ string) string {
 		return fmt.Sprintf("%v", value)
 	}
 }
+
+// resetSettingToDefault resets a specific setting to its default value
+func (m *RootModel) resetSettingToDefault(category, key string, defaults *config.Settings) {
+	switch category {
+	case "General":
+		switch key {
+		case "default_download_dir":
+			m.Settings.General.DefaultDownloadDir = defaults.General.DefaultDownloadDir
+		case "warn_on_duplicate":
+			m.Settings.General.WarnOnDuplicate = defaults.General.WarnOnDuplicate
+		case "extension_prompt":
+			m.Settings.General.ExtensionPrompt = defaults.General.ExtensionPrompt
+		case "auto_resume":
+			m.Settings.General.AutoResume = defaults.General.AutoResume
+		}
+	case "Connections":
+		switch key {
+		case "max_connections_per_host":
+			m.Settings.Connections.MaxConnectionsPerHost = defaults.Connections.MaxConnectionsPerHost
+		case "max_global_connections":
+			m.Settings.Connections.MaxGlobalConnections = defaults.Connections.MaxGlobalConnections
+		case "user_agent":
+			m.Settings.Connections.UserAgent = defaults.Connections.UserAgent
+		}
+	case "Chunks":
+		switch key {
+		case "min_chunk_size":
+			m.Settings.Chunks.MinChunkSize = defaults.Chunks.MinChunkSize
+		case "max_chunk_size":
+			m.Settings.Chunks.MaxChunkSize = defaults.Chunks.MaxChunkSize
+		case "target_chunk_size":
+			m.Settings.Chunks.TargetChunkSize = defaults.Chunks.TargetChunkSize
+		case "worker_buffer_size":
+			m.Settings.Chunks.WorkerBufferSize = defaults.Chunks.WorkerBufferSize
+		}
+	case "Performance":
+		switch key {
+		case "max_task_retries":
+			m.Settings.Performance.MaxTaskRetries = defaults.Performance.MaxTaskRetries
+		case "slow_worker_threshold":
+			m.Settings.Performance.SlowWorkerThreshold = defaults.Performance.SlowWorkerThreshold
+		case "slow_worker_grace_period":
+			m.Settings.Performance.SlowWorkerGracePeriod = defaults.Performance.SlowWorkerGracePeriod
+		case "stall_timeout":
+			m.Settings.Performance.StallTimeout = defaults.Performance.StallTimeout
+		case "speed_ema_alpha":
+			m.Settings.Performance.SpeedEmaAlpha = defaults.Performance.SpeedEmaAlpha
+		}
+	}
+}
