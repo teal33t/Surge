@@ -92,10 +92,18 @@ func (m RootModel) viewSettings() string {
 		meta := settingsMeta[m.SettingsSelectedRow]
 		value := settingsValues[meta.Key]
 
+		// Get unit suffix
+		unit := m.getSettingUnit()
+		unitStyle := lipgloss.NewStyle().Foreground(ColorGray)
+
 		// Format value
-		valueStr := formatSettingValue(value, meta.Type)
+		var valueStr string
 		if m.SettingsIsEditing {
-			valueStr = m.SettingsInput.View()
+			// Show input with unit suffix (non-deletable)
+			valueStr = m.SettingsInput.View() + unitStyle.Render(unit)
+		} else {
+			// Show formatted value with unit
+			valueStr = formatSettingValueForEdit(value, meta.Type, meta.Key) + unitStyle.Render(unit)
 		}
 
 		// Show Tab hint for directory settings
@@ -315,6 +323,42 @@ func (m RootModel) getSettingsCount() int {
 	return len(metadata[currentCategory])
 }
 
+// getSettingUnit returns the unit suffix for the currently selected setting
+func (m RootModel) getSettingUnit() string {
+	key := m.getCurrentSettingKey()
+	switch key {
+	case "min_chunk_size", "max_chunk_size", "target_chunk_size":
+		return " MB"
+	case "worker_buffer_size":
+		return " KB"
+	case "slow_worker_grace_period", "stall_timeout":
+		return " (e.g. 5s)"
+	case "slow_worker_threshold", "speed_ema_alpha":
+		return " (0.0-1.0)"
+	default:
+		return ""
+	}
+}
+
+// formatSettingValueForEdit returns a plain value without units for editing
+func formatSettingValueForEdit(value interface{}, typ, key string) string {
+	switch key {
+	case "min_chunk_size", "max_chunk_size", "target_chunk_size":
+		if v, ok := value.(int64); ok {
+			mb := float64(v) / (1024 * 1024)
+			return fmt.Sprintf("%.1f", mb)
+		}
+	case "worker_buffer_size":
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.Int {
+			kb := float64(v.Int()) / 1024
+			return fmt.Sprintf("%.0f", kb)
+		}
+	}
+	// Default: use standard format
+	return formatSettingValue(value, typ)
+}
+
 // formatSettingValue formats a setting value for display
 func formatSettingValue(value interface{}, typ string) string {
 	if value == nil {
@@ -335,16 +379,13 @@ func formatSettingValue(value interface{}, typ string) string {
 		}
 	case "int64":
 		if v, ok := value.(int64); ok {
-			// Display as MB for chunk sizes
-			mb := float64(v) / (1024 * 1024)
-			return fmt.Sprintf("%.1f MB", mb)
+			// Just display the raw number - units handled by getSettingUnit
+			return fmt.Sprintf("%d", v)
 		}
 	case "int":
-		// Display as KB for buffer sizes
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.Int {
-			kb := float64(v.Int()) / 1024
-			return fmt.Sprintf("%.0f KB", kb)
+			return fmt.Sprintf("%d", v.Int())
 		}
 	case "float64":
 		if v, ok := value.(float64); ok {

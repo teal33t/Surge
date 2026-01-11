@@ -767,12 +767,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// Enter edit mode
 					m.SettingsIsEditing = true
-					// Pre-fill with current value
+					// Pre-fill with current value (without units)
 					categories := config.CategoryOrder()
 					currentCategory := categories[m.SettingsActiveTab]
 					values := m.getSettingsValues(currentCategory)
 					key := m.getCurrentSettingKey()
-					m.SettingsInput.SetValue(formatSettingValue(values[key], typ))
+					m.SettingsInput.SetValue(formatSettingValueForEdit(values[key], typ, key))
 					m.SettingsInput.Focus()
 				}
 				return m, nil
