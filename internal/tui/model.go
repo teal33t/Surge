@@ -182,6 +182,18 @@ func InitialRootModel() RootModel {
 		}
 	}
 
+	// Load completed downloads from master list (for Done tab persistence)
+	if completedEntries, err := downloader.LoadCompletedDownloads(); err == nil {
+		for _, entry := range completedEntries {
+			id := len(downloads) + 1
+			dm := NewDownloadModel(id, entry.URL, entry.Filename, entry.TotalSize)
+			dm.done = true
+			dm.Downloaded = entry.TotalSize
+			dm.progress.SetPercent(1.0)
+			downloads = append(downloads, dm)
+		}
+	}
+
 	// Initialize the download list
 	downloadList := NewDownloadList(80, 20) // Default size, will be resized on WindowSizeMsg
 
