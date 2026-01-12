@@ -127,6 +127,33 @@ func probeServer(ctx context.Context, rawurl string, filenameHint string) (*Prob
 	return result, nil
 }
 
+// uniqueFilePath returns a unique file path by appending (1), (2), etc. if the file exists
+func uniqueFilePath(path string) string {
+	// Check if file exists (both final and incomplete)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path + IncompleteSuffix); os.IsNotExist(err) {
+			return path // Neither exists, use original
+		}
+	}
+
+	// File exists, generate unique name
+	dir := filepath.Dir(path)
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(filepath.Base(path), ext)
+
+	for i := 1; i <= 100; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s(%d)%s", base, i, ext))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			if _, err := os.Stat(candidate + IncompleteSuffix); os.IsNotExist(err) {
+				return candidate
+			}
+		}
+	}
+
+	// Fallback (shouldn't happen)
+	return path
+}
+
 // TUIDownload is the main entry point for TUI downloads
 func TUIDownload(ctx context.Context, cfg DownloadConfig) error {
 
@@ -148,6 +175,10 @@ func TUIDownload(ctx context.Context, cfg DownloadConfig) error {
 	if info, err := os.Stat(cfg.OutputPath); err == nil && info.IsDir() {
 		destPath = filepath.Join(cfg.OutputPath, probe.Filename)
 	}
+
+	// Generate unique filename if file already exists
+	destPath = uniqueFilePath(destPath)
+	finalFilename := filepath.Base(destPath)
 	utils.Debug("Destination path: %s", destPath)
 
 	// Send download started message
@@ -155,7 +186,7 @@ func TUIDownload(ctx context.Context, cfg DownloadConfig) error {
 		cfg.ProgressCh <- messages.DownloadStartedMsg{
 			DownloadID: cfg.ID,
 			URL:        cfg.URL,
-			Filename:   probe.Filename,
+			Filename:   finalFilename,
 			Total:      probe.FileSize,
 			DestPath:   destPath,
 		}
