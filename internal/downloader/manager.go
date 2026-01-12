@@ -139,10 +139,25 @@ func uniqueFilePath(path string) string {
 	// File exists, generate unique name
 	dir := filepath.Dir(path)
 	ext := filepath.Ext(path)
-	base := strings.TrimSuffix(filepath.Base(path), ext)
+	name := strings.TrimSuffix(filepath.Base(path), ext)
 
-	for i := 1; i <= 100; i++ {
-		candidate := filepath.Join(dir, fmt.Sprintf("%s(%d)%s", base, i, ext))
+	// Check if name already has a counter like "file(1)"
+	base := name
+	counter := 1
+
+	if len(name) > 3 && name[len(name)-1] == ')' {
+		if openParen := strings.LastIndexByte(name, '('); openParen != -1 {
+			// Try to parse number between parens
+			numStr := name[openParen+1 : len(name)-1]
+			if num, err := strconv.Atoi(numStr); err == nil && num > 0 {
+				base = name[:openParen]
+				counter = num + 1
+			}
+		}
+	}
+
+	for i := 0; i < 100; i++ { // Try next 100 numbers
+		candidate := filepath.Join(dir, fmt.Sprintf("%s(%d)%s", base, counter+i, ext))
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			if _, err := os.Stat(candidate + IncompleteSuffix); os.IsNotExist(err) {
 				return candidate
@@ -150,7 +165,8 @@ func uniqueFilePath(path string) string {
 		}
 	}
 
-	// Fallback (shouldn't happen)
+	// Fallback: just append a large random number or give up (original behavior essentially gave up or made ugly names)
+	// Here we fallback to original behavior of appending if the clean one failed 100 times
 	return path
 }
 
