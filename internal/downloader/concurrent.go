@@ -354,7 +354,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, destPath st
 
 	// Check for saved state BEFORE truncating (resume case)
 	var tasks []Task
-	savedState, err := LoadState(rawurl)
+	savedState, err := LoadState(rawurl, destPath)
 	isResume := err == nil && savedState != nil && len(savedState.Tasks) > 0
 
 	if isResume {
@@ -508,7 +508,6 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, destPath st
 
 		// Save state for resume (use computed value for consistency)
 		state := &DownloadState{
-			URLHash:    URLHash(d.URL),
 			URL:        d.URL,
 			DestPath:   destPath,
 			TotalSize:  fileSize,
@@ -516,7 +515,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, destPath st
 			Tasks:      remainingTasks,
 			Filename:   filepath.Base(destPath),
 		}
-		if err := SaveState(d.URL, state); err != nil {
+		if err := SaveState(d.URL, destPath, state); err != nil {
 			utils.Debug("Failed to save pause state: %v", err)
 		}
 
@@ -543,7 +542,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl, destPath st
 	}
 
 	// Delete state file on successful completion
-	_ = DeleteState(d.URL)
+	_ = DeleteState(d.URL, destPath)
 
 	// Note: Download completion notifications are handled by the TUI via DownloadCompleteMsg
 

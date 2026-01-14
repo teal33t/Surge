@@ -192,8 +192,9 @@ func InitialRootModel() RootModel {
 			id := uuid.New().String() // Generate new UUID for each loaded download
 			dm := NewDownloadModel(id, entry.URL, entry.Filename, 0)
 			dm.paused = true
-			// Load actual progress from state file
-			if state, err := downloader.LoadState(entry.URL); err == nil {
+			dm.Destination = entry.DestPath // Store destination for state lookup on resume
+			// Load actual progress from state file (using URL+DestPath for unique lookup)
+			if state, err := downloader.LoadState(entry.URL, entry.DestPath); err == nil {
 				dm.Downloaded = state.Downloaded
 				dm.Total = state.TotalSize
 				dm.state.Downloaded.Store(state.Downloaded)

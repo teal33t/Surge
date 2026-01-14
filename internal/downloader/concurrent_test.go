@@ -638,7 +638,6 @@ func TestConcurrentDownloader_ResumePartialDownload(t *testing.T) {
 		{Offset: partialSize, Length: fileSize - partialSize},
 	}
 	savedState := &DownloadState{
-		URLHash:    URLHash(server.URL()),
 		URL:        server.URL(),
 		DestPath:   destPath,
 		TotalSize:  fileSize,
@@ -646,10 +645,10 @@ func TestConcurrentDownloader_ResumePartialDownload(t *testing.T) {
 		Tasks:      remainingTasks,
 		Filename:   "resume_test.bin",
 	}
-	if err := SaveState(server.URL(), savedState); err != nil {
+	if err := SaveState(server.URL(), destPath, savedState); err != nil {
 		t.Fatalf("Failed to save state: %v", err)
 	}
-	defer DeleteState(server.URL())
+	defer DeleteState(server.URL(), destPath)
 
 	// Now resume download
 	state := NewProgressState("resume-test", fileSize)
@@ -675,7 +674,7 @@ func TestConcurrentDownloader_ResumePartialDownload(t *testing.T) {
 	}
 
 	// State file should be deleted on success
-	_, err = LoadState(server.URL())
+	_, err = LoadState(server.URL(), destPath)
 	if err == nil {
 		t.Error("State file should be deleted after successful download")
 	}

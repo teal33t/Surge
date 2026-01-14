@@ -53,6 +53,7 @@ const (
 type DownloadConfig struct {
 	URL        string
 	OutputPath string
+	DestPath   string // Full destination path (for resume state lookup)
 	ID         string
 	Filename   string
 	Verbose    bool

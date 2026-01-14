@@ -21,6 +21,7 @@ type WorkerPool struct {
 	progressCh chan<- tea.Msg
 	downloads  map[string]*activeDownload // Track active downloads for pause/resume
 	mu         sync.RWMutex
+	wg         sync.WaitGroup //We use this to wait for all active downloads to pause before exiting the program
 }
 
 func NewWorkerPool(progressCh chan<- tea.Msg) *WorkerPool {
@@ -70,7 +71,7 @@ func (p *WorkerPool) Pause(downloadID string) {
 // PauseAll pauses all active downloads (for graceful shutdown)
 func (p *WorkerPool) PauseAll() {
 	p.mu.RLock()
-	ids := make([]string, 0, len(p.downloads))
+	ids := make([]string, 0, len(p.downloads)) //This stores the uuids of the downloads to be paused
 	for id, ad := range p.downloads {
 		// Only pause downloads that are actually active (not already paused or done)
 		if ad != nil && ad.config.State != nil && !ad.config.State.IsPaused() && !ad.config.State.Done.Load() {
@@ -136,6 +137,7 @@ func (p *WorkerPool) Resume(downloadID string) {
 
 func (p *WorkerPool) worker() {
 	for cfg := range p.taskChan {
+		p.wg.Add(1)
 		// Create cancellable context
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -178,5 +180,12 @@ func (p *WorkerPool) worker() {
 			p.mu.Unlock()
 		}
 		// If paused, we keep it in downloads map for potential resume
+		p.wg.Done()
 	}
+}
+
+// GracefulShutdown pauses all downloads and waits for them to save state
+func (p *WorkerPool) GracefulShutdown() {
+	p.PauseAll()
+	p.wg.Wait() // Blocks until all workers call Done()
 }

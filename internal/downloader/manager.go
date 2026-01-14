@@ -199,8 +199,9 @@ func TUIDownload(ctx context.Context, cfg DownloadConfig) error {
 
 	// Check if this is a resume (explicitly marked by TUI)
 	var savedState *DownloadState
-	if cfg.IsResume {
-		savedState, _ = LoadState(cfg.URL)
+	if cfg.IsResume && cfg.DestPath != "" {
+		// Resume: use the provided destination path for state lookup
+		savedState, _ = LoadState(cfg.URL, cfg.DestPath)
 	}
 	isResume := cfg.IsResume && savedState != nil && len(savedState.Tasks) > 0 && savedState.DestPath != ""
 

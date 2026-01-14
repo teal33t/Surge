@@ -51,6 +51,26 @@ func TestURLHashConsistency(t *testing.T) {
 	}
 }
 
+func TestStateHashUniqueness(t *testing.T) {
+	// Same URL, different destinations should produce different hashes
+	url := "https://example.com/file.zip"
+	dest1 := "C:\\Downloads\\file.zip"
+	dest2 := "C:\\Downloads\\file(1).zip"
+
+	hash1 := StateHash(url, dest1)
+	hash2 := StateHash(url, dest2)
+
+	if hash1 == hash2 {
+		t.Errorf("Same URL with different destinations produced same StateHash: %s", hash1)
+	}
+
+	// Verify StateHash is consistent
+	hash3 := StateHash(url, dest1)
+	if hash1 != hash3 {
+		t.Errorf("Same URL+dest produced different StateHash: %s vs %s", hash1, hash3)
+	}
+}
+
 func TestSaveLoadState(t *testing.T) {
 	// Ensure directories exist
 	if err := config.EnsureDirs(); err != nil {
@@ -58,9 +78,10 @@ func TestSaveLoadState(t *testing.T) {
 	}
 
 	testURL := "https://test.example.com/save-load-test.zip"
+	testDestPath := "C:\\Downloads\\testfile.zip"
 	originalState := &DownloadState{
 		URL:        testURL,
-		DestPath:   "C:\\Downloads\\testfile.zip",
+		DestPath:   testDestPath,
 		TotalSize:  1000000,
 		Downloaded: 500000,
 		Tasks: []Task{
@@ -71,12 +92,12 @@ func TestSaveLoadState(t *testing.T) {
 	}
 
 	// Save state
-	if err := SaveState(testURL, originalState); err != nil {
+	if err := SaveState(testURL, testDestPath, originalState); err != nil {
 		t.Fatalf("SaveState failed: %v", err)
 	}
 
 	// Load state
-	loadedState, err := LoadState(testURL)
+	loadedState, err := LoadState(testURL, testDestPath)
 	if err != nil {
 		t.Fatalf("LoadState failed: %v", err)
 	}
@@ -98,13 +119,16 @@ func TestSaveLoadState(t *testing.T) {
 		t.Errorf("Filename = %s, want %s", loadedState.Filename, originalState.Filename)
 	}
 
-	// Verify URLHash was set
+	// Verify hashes were set
 	if loadedState.URLHash == "" {
 		t.Error("URLHash was not set")
 	}
+	if loadedState.StateHash == "" {
+		t.Error("StateHash was not set")
+	}
 
 	// Cleanup
-	if err := DeleteState(testURL); err != nil {
+	if err := DeleteState(testURL, testDestPath); err != nil {
 		t.Errorf("Cleanup failed: %v", err)
 	}
 }
@@ -115,68 +139,73 @@ func TestDeleteState(t *testing.T) {
 	}
 
 	testURL := "https://test.example.com/delete-test.zip"
+	testDestPath := "C:\\Downloads\\delete-test.zip"
 	state := &DownloadState{
 		URL:      testURL,
+		DestPath: testDestPath,
 		Filename: "delete-test.zip",
 	}
 
 	// Save state
-	if err := SaveState(testURL, state); err != nil {
+	if err := SaveState(testURL, testDestPath, state); err != nil {
 		t.Fatalf("SaveState failed: %v", err)
 	}
 
 	// Verify it was saved
-	if _, err := LoadState(testURL); err != nil {
+	if _, err := LoadState(testURL, testDestPath); err != nil {
 		t.Fatalf("State was not saved properly: %v", err)
 	}
 
 	// Delete state
-	if err := DeleteState(testURL); err != nil {
+	if err := DeleteState(testURL, testDestPath); err != nil {
 		t.Fatalf("DeleteState failed: %v", err)
 	}
 
 	// Verify it was deleted
-	_, err := LoadState(testURL)
+	_, err := LoadState(testURL, testDestPath)
 	if err == nil {
 		t.Error("LoadState should fail after DeleteState")
 	}
 }
 
 func TestStateOverwrite(t *testing.T) {
-	// This tests the user's scenario: pause at 30%, resume to 80%, pause again
+	// This tests the scenario: pause at 30%, resume to 80%, pause again
 	// The state should reflect 80%, not 30%
 	if err := config.EnsureDirs(); err != nil {
 		t.Fatalf("Failed to create directories: %v", err)
 	}
 
 	testURL := "https://test.example.com/overwrite-test.zip"
+	testDestPath := "C:\\Downloads\\overwrite-test.zip"
 
 	// First pause at 30%
 	state1 := &DownloadState{
 		URL:        testURL,
+		DestPath:   testDestPath,
 		TotalSize:  1000000,
 		Downloaded: 300000, // 30%
 		Tasks:      []Task{{Offset: 300000, Length: 700000}},
 		Filename:   "overwrite-test.zip",
 	}
-	if err := SaveState(testURL, state1); err != nil {
+	if err := SaveState(testURL, testDestPath, state1); err != nil {
 		t.Fatalf("First SaveState failed: %v", err)
 	}
 
 	// Second pause at 80% (simulating resume + more downloading)
 	state2 := &DownloadState{
 		URL:        testURL,
+		DestPath:   testDestPath,
 		TotalSize:  1000000,
 		Downloaded: 800000, // 80%
 		Tasks:      []Task{{Offset: 800000, Length: 200000}},
 		Filename:   "overwrite-test.zip",
 	}
-	if err := SaveState(testURL, state2); err != nil {
+	if err := SaveState(testURL, testDestPath, state2); err != nil {
 		t.Fatalf("Second SaveState failed: %v", err)
 	}
 
 	// Load and verify it's 80%, not 30%
-	loaded, err := LoadState(testURL)
+	loaded, err := LoadState(testURL, testDestPath)
 	if err != nil {
 		t.Fatalf("LoadState failed: %v", err)
 	}
@@ -189,5 +218,94 @@ func TestStateOverwrite(t *testing.T) {
 	}
 
 	// Cleanup
-	DeleteState(testURL)
+	DeleteState(testURL, testDestPath)
+}
+
+// TestDuplicateURLStateIsolation verifies that downloading the same URL multiple times
+// creates separate state files for each download (the bug being fixed)
+func TestDuplicateURLStateIsolation(t *testing.T) {
+	if err := config.EnsureDirs(); err != nil {
+		t.Fatalf("Failed to create directories: %v", err)
+	}
+
+	testURL := "https://example.com/samefile.zip"
+	dest1 := "C:\\Downloads\\samefile.zip"
+	dest2 := "C:\\Downloads\\samefile(1).zip"
+	dest3 := "C:\\Downloads\\samefile(2).zip"
+
+	// Create 3 downloads of the same URL with different destinations
+	state1 := &DownloadState{
+		URL:        testURL,
+		DestPath:   dest1,
+		TotalSize:  1000000,
+		Downloaded: 100000, // 10%
+		Tasks:      []Task{{Offset: 100000, Length: 900000}},
+		Filename:   "samefile.zip",
+	}
+	state2 := &DownloadState{
+		URL:        testURL,
+		DestPath:   dest2,
+		TotalSize:  1000000,
+		Downloaded: 500000, // 50%
+		Tasks:      []Task{{Offset: 500000, Length: 500000}},
+		Filename:   "samefile(1).zip",
+	}
+	state3 := &DownloadState{
+		URL:        testURL,
+		DestPath:   dest3,
+		TotalSize:  1000000,
+		Downloaded: 900000, // 90%
+		Tasks:      []Task{{Offset: 900000, Length: 100000}},
+		Filename:   "samefile(2).zip",
+	}
+
+	// Save all three states (simulating pausing 3 downloads)
+	if err := SaveState(testURL, dest1, state1); err != nil {
+		t.Fatalf("SaveState 1 failed: %v", err)
+	}
+	if err := SaveState(testURL, dest2, state2); err != nil {
+		t.Fatalf("SaveState 2 failed: %v", err)
+	}
+	if err := SaveState(testURL, dest3, state3); err != nil {
+		t.Fatalf("SaveState 3 failed: %v", err)
+	}
+
+	// Load and verify each has its correct state (THE FIX)
+	loaded1, err := LoadState(testURL, dest1)
+	if err != nil {
+		t.Fatalf("LoadState 1 failed: %v", err)
+	}
+	if loaded1.Downloaded != 100000 {
+		t.Errorf("State 1 Downloaded = %d, want 100000", loaded1.Downloaded)
+	}
+	if loaded1.DestPath != dest1 {
+		t.Errorf("State 1 DestPath = %s, want %s", loaded1.DestPath, dest1)
+	}
+
+	loaded2, err := LoadState(testURL, dest2)
+	if err != nil {
+		t.Fatalf("LoadState 2 failed: %v", err)
+	}
+	if loaded2.Downloaded != 500000 {
+		t.Errorf("State 2 Downloaded = %d, want 500000", loaded2.Downloaded)
+	}
+	if loaded2.DestPath != dest2 {
+		t.Errorf("State 2 DestPath = %s, want %s", loaded2.DestPath, dest2)
+	}
+
+	loaded3, err := LoadState(testURL, dest3)
+	if err != nil {
+		t.Fatalf("LoadState 3 failed: %v", err)
+	}
+	if loaded3.Downloaded != 900000 {
+		t.Errorf("State 3 Downloaded = %d, want 900000", loaded3.Downloaded)
+	}
+	if loaded3.DestPath != dest3 {
+		t.Errorf("State 3 DestPath = %s, want %s", loaded3.DestPath, dest3)
+	}
+
+	// Cleanup
+	DeleteState(testURL, dest1)
+	DeleteState(testURL, dest2)
+	DeleteState(testURL, dest3)
 }

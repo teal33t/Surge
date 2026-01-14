@@ -422,7 +422,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Quit
 			if key.Matches(msg, m.keys.Dashboard.Quit) {
 				// Graceful shutdown: pause all active downloads to save state
-				m.Pool.PauseAll()
+				m.Pool.GracefulShutdown()
 				return m, tea.Quit
 			}
 			if key.Matches(msg, m.keys.Dashboard.ForceQuit) {
@@ -481,8 +481,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.Pool.Cancel(dl.ID)
 
 						// Delete state files
-						if dl.URL != "" {
-							_ = downloader.DeleteStateByURL(dl.URL)
+						if dl.URL != "" && dl.Destination != "" {
+							_ = downloader.DeleteStateByURL(dl.URL, dl.Destination)
 						}
 
 						// Delete partial/incomplete files (only for non-completed downloads)
@@ -529,6 +529,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							cfg := downloader.DownloadConfig{
 								URL:        d.URL,
 								OutputPath: outputPath,
+								DestPath:   d.Destination, // Full path for state lookup
 								ID:         d.ID,
 								Filename:   d.Filename,
 								Verbose:    false,
