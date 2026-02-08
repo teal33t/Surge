@@ -16,6 +16,16 @@ let isConnected = false;
 const pendingDuplicates = new Map();
 let pendingDuplicateCounter = 0;
 
+function updateBadge() {
+  const count = pendingDuplicates.size;
+  if (count > 0) {
+    browser.action.setBadgeText({ text: count.toString() });
+    browser.action.setBadgeBackgroundColor({ color: "#FF0000" }); // Red
+  } else {
+    browser.action.setBadgeText({ text: "" });
+  }
+}
+
 // === Header Capture ===
 // Store request headers for URLs to forward to Surge (cookies, auth, etc.)
 // Key: URL, Value: { headers: {}, timestamp: Date.now() }
@@ -47,7 +57,7 @@ browser.webRequest.onBeforeSendHeaders.addListener(
     }
   },
   { urls: ["<all_urls>"] },
-  ["requestHeaders"]
+  ["requestHeaders", "extraHeaders"]
 );
 
 function cleanupExpiredHeaders() {
@@ -369,7 +379,6 @@ function extractPathInfo(downloadItem) {
 // 2. onChanged: Wait for filename to be determined, then intercept
 
 const processedIds = new Set();
-const pendingInterceptions = new Map(); // downloadId -> downloadItem
 
 browser.downloads.onCreated.addListener(async (downloadItem) => {
   if (processedIds.has(downloadItem.id)) {
@@ -394,59 +403,11 @@ browser.downloads.onCreated.addListener(async (downloadItem) => {
     return;
   }
 
-  // If filename is already determined (auto-download mode), intercept immediately
-  if (downloadItem.filename && downloadItem.filename.length > 0) {
-    console.log('[Surge] Filename already determined, intercepting immediately');
-    processedIds.add(downloadItem.id);
-    setTimeout(() => processedIds.delete(downloadItem.id), 120000);
-    await handleDownloadIntercept(downloadItem);
-    return;
-  }
-
-  // Otherwise, wait for filename to be determined (Save As dialog)
-  console.log('[Surge] Waiting for filename determination...');
-  pendingInterceptions.set(downloadItem.id, downloadItem);
+  // Intercept immediately
+  processedIds.add(downloadItem.id);
+  setTimeout(() => processedIds.delete(downloadItem.id), 120000);
   
-  // Set timeout to cleanup if filename never gets determined
-  setTimeout(() => {
-    if (pendingInterceptions.has(downloadItem.id)) {
-      console.log('[Surge] Timeout waiting for filename, cleaning up');
-      pendingInterceptions.delete(downloadItem.id);
-    }
-  }, 60000);
-});
-
-// Listen for download changes to catch when filename is determined
-browser.downloads.onChanged.addListener(async (delta) => {
-  // Check if this download is pending interception
-  if (!pendingInterceptions.has(delta.id)) {
-    return;
-  }
-
-  // Check if filename was just determined
-  if (delta.filename && delta.filename.current) {
-    console.log('[Surge] Filename determined:', delta.filename.current);
-    
-    const downloadItem = pendingInterceptions.get(delta.id);
-    pendingInterceptions.delete(delta.id);
-    
-    // Mark as processed
-    if (processedIds.has(delta.id)) {
-      return;
-    }
-    processedIds.add(delta.id);
-    setTimeout(() => processedIds.delete(delta.id), 120000);
-    
-    // Update the downloadItem with the new filename
-    downloadItem.filename = delta.filename.current;
-    
-    await handleDownloadIntercept(downloadItem);
-  }
-  
-  // If download was cancelled or errored, clean up
-  if (delta.state && (delta.state.current === 'interrupted' || delta.state.current === 'complete')) {
-    pendingInterceptions.delete(delta.id);
-  }
+  await handleDownloadIntercept(downloadItem);
 });
 
 async function handleDownloadIntercept(downloadItem) {
@@ -477,9 +438,13 @@ async function handleDownloadIntercept(downloadItem) {
     for (const [id, data] of pendingDuplicates) {
       if (Date.now() - data.timestamp > 60000) {
         pendingDuplicates.delete(id);
+        updateBadge();
       }
     }
     
+    // Update badge
+    updateBadge();
+
     // Try to open popup and send prompt
     try {
       await browser.action.openPopup();
@@ -504,20 +469,21 @@ async function handleDownloadIntercept(downloadItem) {
     return; // Let browser continue - download is already in progress
   }
 
-  const { filename, directory } = extractPathInfo(downloadItem);
+  const { filename } = extractPathInfo(downloadItem);
 
   try {
     await browser.downloads.cancel(downloadItem.id);
     await browser.downloads.erase({ id: downloadItem.id });
 
+    // Force default directory by passing empty string
     const result = await sendToSurge(
       downloadItem.url,
       filename,
-      directory
+      "" 
     );
 
     if (result.success) {
-      browser.notifications.create({
+      browser.notifications.create(`surge-confirm-${downloadItem.id}`, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Surge',
@@ -539,10 +505,36 @@ async function handleDownloadIntercept(downloadItem) {
         message: `Failed to start download: ${result.error}`,
       });
     }
+
+    // Check for next pending duplicate
+    if (pendingDuplicates.size > 0) {
+      const [nextId, nextData] = pendingDuplicates.entries().next().value;
+      const nextName = nextData.filename || nextData.url.split("/").pop() || "Unknown file";
+      
+      browser.runtime.sendMessage({
+        type: "promptDuplicate",
+        id: nextId,
+        filename: nextName,
+      }).catch(() => {});
+    }
   } catch (error) {
     console.error('[Surge] Failed to intercept download:', error);
   }
 }
+
+// Handle notification clicks
+browser.notifications.onClicked.addListener((notificationId) => {
+  if (notificationId.startsWith("surge-confirm-")) {
+    // Attempt to open popup
+    try {
+      browser.action.openPopup();
+    } catch (e) {
+      console.error("[Surge] Failed to open popup from notification:", e);
+    }
+    // Clear notification
+    browser.notifications.clear(notificationId);
+  }
+});
 
 // === Message Handling ===
 
@@ -594,7 +586,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
           console.log('[Surge] confirmDuplicate called, pending:', pending ? 'found' : 'NOT FOUND', 'id:', message.id);
           if (pending) {
             pendingDuplicates.delete(message.id);
-            
+            updateBadge(); // Update badge
+
             console.log('[Surge] Sending confirmed duplicate to Surge:', pending.url);
             const result = await sendToSurge(
               pending.url,
@@ -618,14 +611,44 @@ browser.runtime.onMessage.addListener((message, sender) => {
           }
         }
         
-        case 'skipDuplicate': {
+        case "skipDuplicate": {
           // User skipped duplicate download
           const pending = pendingDuplicates.get(message.id);
           if (pending) {
             pendingDuplicates.delete(message.id);
-            console.log('[Surge] User skipped duplicate download:', pending.url);
+            updateBadge(); // Update badge
+
+            console.log(
+              "[Surge] User skipped duplicate download:",
+              pending.url,
+            );
+            
+            // Check for next pending duplicate
+            if (pendingDuplicates.size > 0) {
+              const [nextId, nextData] = pendingDuplicates.entries().next().value;
+              const nextName = nextData.filename || nextData.url.split("/").pop() || "Unknown file";
+              
+              browser.runtime.sendMessage({
+                type: "promptDuplicate",
+                id: nextId,
+                filename: nextName,
+              }).catch(() => {});
+            }
           }
           return { success: true };
+        }
+
+        case "getPendingDuplicates": {
+          const duplicates = [];
+          for (const [id, data] of pendingDuplicates) {
+            duplicates.push({
+              id,
+              filename:
+                data.filename || data.url.split("/").pop() || "Unknown file",
+              url: data.url,
+            });
+          }
+          return { duplicates };
         }
         
         default:
