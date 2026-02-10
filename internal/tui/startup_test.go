@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/surge-downloader/surge/internal/config"
+	"github.com/surge-downloader/surge/internal/core"
 	"github.com/surge-downloader/surge/internal/download"
 	"github.com/surge-downloader/surge/internal/engine/state"
 	"github.com/surge-downloader/surge/internal/engine/types"
@@ -35,7 +36,7 @@ func TestTUI_Startup_HandlesResume(t *testing.T) {
 	pool := download.NewWorkerPool(progressChan, 3)
 
 	// PASSING noResume=false (default)
-	m := InitialRootModel(0, "v0.0.0", pool, progressChan, false)
+	m := InitialRootModel(1700, "test-version", core.NewLocalDownloadServiceWithInput(pool, progressChan), false)
 
 	// 4. Verify Download is Active in Model
 	// InitialRootModel loads downloads and should set paused=false for "queued" items
@@ -43,9 +44,10 @@ func TestTUI_Startup_HandlesResume(t *testing.T) {
 	for _, d := range m.downloads { // Access unexported field
 		if d.ID == testID {
 			found = true
-			if d.paused {
-				t.Error("TUI Model initialized queued download as PAUSED (should be active)")
+			if !d.pendingResume {
+				t.Error("TUI Model initialized queued download without pendingResume=true")
 			}
+			// Note: d.paused will be true initially until async resume completes
 			// Verify Filename and Destination are preserved (critical to avoid uniqueFilePath generation)
 			if d.Filename != "tui-resume.zip" {
 				t.Errorf("Expected filename tui-resume.zip, got %s", d.Filename)

@@ -111,6 +111,26 @@ surge server status
 surge server stop
 ```
 
+### 3. Remote TUI (Connect to a Daemon)
+
+Use this when Surge is running on another machine (or a local daemon you started with `surge server start`).
+
+```bash
+# Connect to a local daemon (auto-discovery via ~/.surge/port)
+surge connect
+
+# Connect to a remote daemon
+surge connect 192.168.1.10:1700 --token <token>
+
+# Or set the token once in the environment
+export SURGE_TOKEN=<token>
+surge connect 192.168.1.10:1700
+```
+
+Notes:
+- The daemon requires a token for all API calls. Print it with `surge token` on the server host.
+- Remote TUI is a viewer/controller for the daemon state; the daemon owns resume behavior.
+
 ### 3. Command Reference
 
 All other commands can be used to interact with a running Surge instance (TUI or Server).
@@ -169,6 +189,11 @@ The Surge extension intercepts browser downloads and sends them straight to your
 - Ensure Surge is running (either TUI `surge` or Server `surge server start`).
 - The extension icon should show a green dot when connected.
 - If the dot is red, check if Surge is running and listening on port 1700.
+- **Auth required:** the daemon now protects all API endpoints. In the extension popup, paste the token from `surge token` and click **Save**.
+- If downloads are not intercepted, make sure **Intercept Downloads** is enabled in the popup.
+- The extension ignores `blob:` / `data:` URLs and historical downloads (older than ~30s).
+- Chrome debugging: open `chrome://extensions` → Surge → **Service worker** → **Inspect** for logs and errors.
+- Firefox debugging: `about:debugging#/runtime/this-firefox` → Surge → **Inspect**.
 
 ---
 

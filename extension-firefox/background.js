@@ -4,12 +4,14 @@
 const DEFAULT_PORT = 1700;
 const MAX_PORT_SCAN = 100;
 const INTERCEPT_ENABLED_KEY = 'interceptEnabled';
+const AUTH_TOKEN_KEY = 'authToken';
 
 // === State ===
 let cachedPort = null;
 let downloads = new Map();
 let lastHealthCheck = 0;
 let isConnected = false;
+let cachedAuthToken = null;
 
 // Pending duplicate downloads waiting for user confirmation
 // Key: unique id, Value: { downloadItem, filename, directory, timestamp }
@@ -82,6 +84,26 @@ function getCapturedHeaders(url) {
   return data.headers;
 }
 
+async function loadAuthToken() {
+  if (cachedAuthToken !== null) {
+    return cachedAuthToken;
+  }
+  const result = await browser.storage.local.get(AUTH_TOKEN_KEY);
+  cachedAuthToken = result[AUTH_TOKEN_KEY] || '';
+  return cachedAuthToken;
+}
+
+async function setAuthToken(token) {
+  cachedAuthToken = token || '';
+  await browser.storage.local.set({ [AUTH_TOKEN_KEY]: cachedAuthToken });
+}
+
+async function authHeaders() {
+  const token = await loadAuthToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 // === Port Discovery ===
 
 async function findSurgePort() {
@@ -96,8 +118,14 @@ async function findSurgePort() {
       });
       clearTimeout(timeoutId);
       if (response.ok) {
-        isConnected = true;
-        return cachedPort;
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json().catch(() => null);
+          if (data && data.status === 'ok') {
+            isConnected = true;
+            return cachedPort;
+          }
+        }
       }
     } catch {}
     cachedPort = null;
@@ -114,6 +142,14 @@ async function findSurgePort() {
       });
       clearTimeout(timeoutId);
       if (response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          continue;
+        }
+        const data = await response.json().catch(() => null);
+        if (!data || data.status !== 'ok') {
+          continue;
+        }
         cachedPort = port;
         isConnected = true;
         console.log(`[Surge] Found server on port ${port}`);
@@ -144,20 +180,35 @@ async function checkSurgeHealth() {
 async function fetchDownloadList() {
   const port = await findSurgePort();
   if (!port) {
+    isConnected = false;
     return [];
   }
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/list`, {
       method: 'GET',
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
     
     if (response.ok) {
-      const list = await response.json();
+      isConnected = true;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        isConnected = false;
+        return [];
+      }
+      let list;
+      try {
+        list = await response.json();
+      } catch {
+        isConnected = false;
+        return [];
+      }
       
       // Handle null or non-array response
       if (!Array.isArray(list)) {
@@ -175,12 +226,38 @@ async function fetchDownloadList() {
         }
         return { ...dl, eta };
       });
+    } else {
+      // Likely auth error or server mismatch
+      isConnected = false;
+      return [];
     }
   } catch (error) {
     console.error('[Surge] Error fetching downloads:', error);
   }
   
   return [];
+}
+
+async function validateAuthToken() {
+  const port = await findSurgePort();
+  if (!port) {
+    isConnected = false;
+    return { ok: false, error: 'no_server' };
+  }
+  try {
+    const headers = await authHeaders();
+    const response = await fetch(`http://127.0.0.1:${port}/list`, {
+      method: 'GET',
+      headers,
+    });
+    if (response.ok) {
+      isConnected = true;
+      return { ok: true };
+    }
+    return { ok: false, status: response.status };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
 }
 
 // === Download Sending ===
@@ -214,10 +291,12 @@ async function sendToSurge(url, filename, absolutePath) {
     // This also bypasses duplicate warnings since extension handles those
     body.skip_approval = true;
 
+    const auth = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/download`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...auth,
       },
       body: JSON.stringify(body),
     });
@@ -244,8 +323,10 @@ async function pauseDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/pause?id=${id}`, {
       method: 'POST',
+      headers,
     });
     return response.ok;
   } catch (error) {
@@ -259,8 +340,10 @@ async function resumeDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/resume?id=${id}`, {
       method: 'POST',
+      headers,
     });
     return response.ok;
   } catch (error) {
@@ -274,8 +357,10 @@ async function cancelDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/delete?id=${id}`, {
       method: 'DELETE',
+      headers,
     });
     return response.ok;
   } catch (error) {
@@ -550,6 +635,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
         case 'getStatus': {
           const enabled = await isInterceptEnabled();
           return { enabled };
+        }
+
+        case 'getAuthToken': {
+          const token = await loadAuthToken();
+          return { token };
+        }
+        
+        case 'setAuthToken': {
+          await setAuthToken(message.token || '');
+          return { success: true };
+        }
+        
+        case 'validateAuth': {
+          const result = await validateAuthToken();
+          return result;
         }
         
         case 'setStatus': {

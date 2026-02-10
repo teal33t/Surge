@@ -39,9 +39,9 @@ func TestIntegration_PauseResume(t *testing.T) {
 	}
 	defer state.CloseDB()
 
-	// 2. Setup Mock Server (100MB file)
-	fileSize := int64(100 * 1024 * 1024) // 100MB
-	server := testutil.NewStreamingMockServer(
+	// 2. Setup Mock Server (500MB file)
+	fileSize := int64(500 * 1024 * 1024) // 500MB
+	server := testutil.NewStreamingMockServerT(t,
 		fileSize,
 		testutil.WithRangeSupport(true),
 		testutil.WithLatency(10*time.Millisecond), // Small latency to allow interruption

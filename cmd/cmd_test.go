@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/surge-downloader/surge/internal/config"
+	"github.com/surge-downloader/surge/internal/core"
 	"github.com/surge-downloader/surge/internal/download"
+	"github.com/surge-downloader/surge/internal/testutil"
 )
 
 func init() {
@@ -28,6 +30,7 @@ func init() {
 // =============================================================================
 
 func TestFindAvailablePort_Success(t *testing.T) {
+	requireTCPListener(t)
 	port, ln := findAvailablePort(50000)
 	if ln == nil {
 		t.Fatal("findAvailablePort returned nil listener")
@@ -46,6 +49,7 @@ func TestFindAvailablePort_Success(t *testing.T) {
 }
 
 func TestFindAvailablePort_ReturnsListener(t *testing.T) {
+	requireTCPListener(t)
 	port, ln := findAvailablePort(51000)
 	if ln == nil {
 		t.Fatal("Expected non-nil listener")
@@ -60,6 +64,7 @@ func TestFindAvailablePort_ReturnsListener(t *testing.T) {
 }
 
 func TestFindAvailablePort_SkipsOccupiedPorts(t *testing.T) {
+	requireTCPListener(t)
 	// Occupy a port
 	ln1, err := net.Listen("tcp", "127.0.0.1:52000")
 	if err != nil {
@@ -185,6 +190,47 @@ func TestCorsMiddleware_PassesThrough(t *testing.T) {
 }
 
 // =============================================================================
+// connect target resolution Tests
+// =============================================================================
+
+func TestResolveConnectBaseURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		target       string
+		insecureHTTP bool
+		want         string
+		wantErr      bool
+	}{
+		{name: "loopback host:port defaults http", target: "127.0.0.1:1700", want: "http://127.0.0.1:1700"},
+		{name: "localhost defaults http", target: "localhost:1700", want: "http://localhost:1700"},
+		{name: "remote host defaults https", target: "example.com:1700", want: "https://example.com:1700"},
+		{name: "https URL allowed", target: "https://example.com:1700", want: "https://example.com:1700"},
+		{name: "http URL loopback allowed", target: "http://127.0.0.1:1700", want: "http://127.0.0.1:1700"},
+		{name: "http URL remote rejected", target: "http://example.com:1700", wantErr: true},
+		{name: "http URL remote allowed with flag", target: "http://example.com:1700", insecureHTTP: true, want: "http://example.com:1700"},
+		{name: "invalid scheme rejected", target: "ftp://example.com:1700", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveConnectBaseURL(tt.target, tt.insecureHTTP)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error, got nil (result: %s)", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("Expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // handleDownload Tests
 // =============================================================================
 
@@ -192,7 +238,8 @@ func TestHandleDownload_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/download", nil)
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected 405, got %d", rec.Code)
@@ -203,7 +250,8 @@ func TestHandleDownload_InvalidJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/download", bytes.NewBufferString("not json"))
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected 400, got %d", rec.Code)
@@ -218,7 +266,8 @@ func TestHandleDownload_MissingURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/download", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected 400, got %d", rec.Code)
@@ -233,7 +282,8 @@ func TestHandleDownload_EmptyURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/download", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected 400, got %d", rec.Code)
@@ -256,7 +306,8 @@ func TestHandleDownload_PathTraversal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/download", bytes.NewBufferString(tt.body))
 			rec := httptest.NewRecorder()
-			handleDownload(rec, req, "")
+			svc := core.NewLocalDownloadService(nil)
+			handleDownload(rec, req, "", svc)
 
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("Expected 400, got %d", rec.Code)
@@ -307,7 +358,8 @@ func TestHandleDownload_StatusQuery_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/download?id=missing-id", nil)
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("Expected 404, got %d", rec.Code)
@@ -432,7 +484,7 @@ func TestHealthEndpoint(t *testing.T) {
 		})
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewHTTPServerT(t, mux)
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/health")
@@ -461,7 +513,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestSendToServer_Success(t *testing.T) {
 	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewHTTPServerT(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
@@ -492,7 +544,7 @@ func TestSendToServer_Success(t *testing.T) {
 
 func TestSendToServer_ServerError(t *testing.T) {
 	// Create mock server that returns error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewHTTPServerT(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 	}))
 	defer server.Close()
@@ -549,6 +601,7 @@ func TestAddCmd_HasGetAlias(t *testing.T) {
 // =============================================================================
 
 func TestStartHTTPServer_HealthEndpoint(t *testing.T) {
+	requireTCPListener(t)
 	// Create listener
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -557,7 +610,8 @@ func TestStartHTTPServer_HealthEndpoint(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	// Start server in background
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil) // Mock service with nil pool/chan for health check
+	go startHTTPServer(ln, port, "", svc)
 
 	// Give server time to start
 	time.Sleep(50 * time.Millisecond)
@@ -587,13 +641,15 @@ func TestStartHTTPServer_HealthEndpoint(t *testing.T) {
 }
 
 func TestStartHTTPServer_HasCORSHeaders(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
@@ -608,13 +664,15 @@ func TestStartHTTPServer_HasCORSHeaders(t *testing.T) {
 }
 
 func TestStartHTTPServer_OptionsRequest(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
 	req, _ := http.NewRequest(http.MethodOptions, fmt.Sprintf("http://127.0.0.1:%d/download", port), nil)
@@ -631,17 +689,22 @@ func TestStartHTTPServer_OptionsRequest(t *testing.T) {
 }
 
 func TestStartHTTPServer_DownloadEndpoint_MethodNotAllowed(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
-	// PUT should not be allowed
+	token := ensureAuthToken()
+
 	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("http://127.0.0.1:%d/download", port), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
@@ -654,21 +717,23 @@ func TestStartHTTPServer_DownloadEndpoint_MethodNotAllowed(t *testing.T) {
 }
 
 func TestStartHTTPServer_DownloadEndpoint_BadRequest(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
 	// POST with invalid JSON
-	resp, err := http.Post(
-		fmt.Sprintf("http://127.0.0.1:%d/download", port),
-		"application/json",
-		bytes.NewBufferString("not json"),
-	)
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/download", port), bytes.NewBufferString("not json"))
+	req.Header.Set("Authorization", "Bearer "+ensureAuthToken())
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -680,21 +745,23 @@ func TestStartHTTPServer_DownloadEndpoint_BadRequest(t *testing.T) {
 }
 
 func TestStartHTTPServer_DownloadEndpoint_MissingURL(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
 	// POST with missing URL
-	resp, err := http.Post(
-		fmt.Sprintf("http://127.0.0.1:%d/download", port),
-		"application/json",
-		bytes.NewBufferString(`{"path": "/downloads"}`),
-	)
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/download", port), bytes.NewBufferString(`{"path": "/downloads"}`))
+	req.Header.Set("Authorization", "Bearer "+ensureAuthToken())
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -706,16 +773,20 @@ func TestStartHTTPServer_DownloadEndpoint_MissingURL(t *testing.T) {
 }
 
 func TestStartHTTPServer_NotFoundEndpoint(t *testing.T) {
+	requireTCPListener(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to create listener: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	go startHTTPServer(ln, port, "")
+	svc := core.NewLocalDownloadService(nil)
+	go startHTTPServer(ln, port, "", svc)
 	time.Sleep(50 * time.Millisecond)
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/nonexistent", port))
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/nonexistent", port), nil)
+	req.Header.Set("Authorization", "Bearer "+ensureAuthToken())
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -750,14 +821,16 @@ func TestHandleDownload_ValidRequest_NoServerProgram(t *testing.T) {
 		}
 	}()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 }
 
 func TestHandleDownload_EmptyBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/download", bytes.NewBufferString(""))
 	rec := httptest.NewRecorder()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	// Empty body causes EOF error on decode
 	if rec.Code != http.StatusBadRequest {
@@ -773,7 +846,8 @@ func TestHandleDownload_LargeURL(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// This should handle large URLs gracefully (validation issues)
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 
 	// Should fail on URL validation or JSON parsing
 	t.Logf("Response: %d", rec.Code)
@@ -790,7 +864,8 @@ func TestHandleDownload_SpecialCharactersInPath(t *testing.T) {
 		}
 	}()
 
-	handleDownload(rec, req, "")
+	svc := core.NewLocalDownloadService(nil)
+	handleDownload(rec, req, "", svc)
 }
 
 // =============================================================================
@@ -871,6 +946,7 @@ func TestPortFileLifecycle(t *testing.T) {
 // =============================================================================
 
 func TestFindAvailablePort_MultipleSequential(t *testing.T) {
+	requireTCPListener(t)
 	var listeners []net.Listener
 	defer func() {
 		for _, ln := range listeners {
@@ -901,6 +977,7 @@ func TestFindAvailablePort_MultipleSequential(t *testing.T) {
 }
 
 func TestFindAvailablePort_HighPort(t *testing.T) {
+	requireTCPListener(t)
 	port, ln := findAvailablePort(60000)
 	if ln == nil {
 		t.Fatal("Failed to find high port")

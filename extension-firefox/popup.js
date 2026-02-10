@@ -8,6 +8,7 @@ const SURGE_API_BASE = 'http://127.0.0.1:1700';
 let downloads = new Map();
 let serverConnected = false;
 let pollInterval = null;
+let healthInterval = null;
 
 // Detect if running in extension context
 const isExtensionContext = typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage;
@@ -20,6 +21,9 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const serverStatus = document.getElementById('serverStatus');
 const interceptToggle = document.getElementById('interceptToggle');
+const authTokenInput = document.getElementById('authToken');
+const saveTokenButton = document.getElementById('saveToken');
+const authStatus = document.getElementById('authStatus');
 
 // Duplicate modal elements
 const duplicateModal = document.getElementById('duplicateModal');
@@ -489,6 +493,18 @@ if (isExtensionContext) {
 
 async function init() {
   console.log('[Surge Popup] Initializing...', isExtensionContext ? '(extension mode)' : '(standalone mode)');
+
+  // Load auth token (extension mode only)
+  if (isExtensionContext && authTokenInput) {
+    try {
+      const response = await apiCall('getAuthToken');
+      if (response && typeof response.token === 'string') {
+        authTokenInput.value = response.token;
+      }
+    } catch (error) {
+      console.error('[Surge Popup] Error loading auth token:', error);
+    }
+  }
   
   // Get current toggle state
   try {
@@ -516,9 +532,23 @@ async function init() {
   
   // Initial fetch
   await fetchDownloads();
-  
+
   // Poll for updates every 1 second
   pollInterval = setInterval(fetchDownloads, 1000);
+
+  // Poll server health every 3 seconds
+  if (isExtensionContext) {
+    healthInterval = setInterval(async () => {
+      try {
+        const response = await apiCall('checkHealth');
+        if (response && typeof response.healthy === 'boolean') {
+          updateServerStatus(response.healthy);
+        }
+      } catch (error) {
+        updateServerStatus(false);
+      }
+    }, 3000);
+  }
 }
 
 // Cleanup when popup closes
@@ -526,7 +556,48 @@ window.addEventListener('unload', () => {
   if (pollInterval) {
     clearInterval(pollInterval);
   }
+  if (healthInterval) {
+    clearInterval(healthInterval);
+  }
 });
+
+// Save auth token
+if (isExtensionContext && saveTokenButton && authTokenInput) {
+  saveTokenButton.addEventListener('click', async () => {
+    const token = authTokenInput.value.trim();
+    if (authStatus) {
+      authStatus.className = 'auth-status';
+      authStatus.textContent = 'Validating...';
+    }
+    authTokenInput.disabled = true;
+    saveTokenButton.disabled = true;
+    try {
+      await apiCall('setAuthToken', { token });
+      const result = await apiCall('validateAuth');
+      if (result && result.ok) {
+        if (authStatus) {
+          authStatus.className = 'auth-status ok';
+          authStatus.textContent = 'Token valid';
+        }
+        await fetchDownloads();
+      } else {
+        if (authStatus) {
+          authStatus.className = 'auth-status err';
+          authStatus.textContent = 'Token invalid';
+        }
+      }
+    } catch (error) {
+      console.error('[Surge Popup] Error saving auth token:', error);
+      if (authStatus) {
+        authStatus.className = 'auth-status err';
+        authStatus.textContent = 'Validation failed';
+      }
+    } finally {
+      authTokenInput.disabled = false;
+      saveTokenButton.disabled = false;
+    }
+  });
+}
 
 // Start
 init();

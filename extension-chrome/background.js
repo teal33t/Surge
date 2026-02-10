@@ -4,12 +4,14 @@
 const DEFAULT_PORT = 1700;
 const MAX_PORT_SCAN = 100;
 const INTERCEPT_ENABLED_KEY = "interceptEnabled";
+const AUTH_TOKEN_KEY = "authToken";
 
 // === State ===
 let cachedPort = null;
 let downloads = new Map();
 let lastHealthCheck = 0;
 let isConnected = false;
+let cachedAuthToken = null;
 
 // Pending duplicate downloads waiting for user confirmation
 // Key: unique id, Value: { downloadItem, filename, directory, timestamp }
@@ -82,6 +84,26 @@ function getCapturedHeaders(url) {
   return data.headers;
 }
 
+async function loadAuthToken() {
+  if (cachedAuthToken !== null) {
+    return cachedAuthToken;
+  }
+  const result = await chrome.storage.local.get(AUTH_TOKEN_KEY);
+  cachedAuthToken = result[AUTH_TOKEN_KEY] || "";
+  return cachedAuthToken;
+}
+
+async function setAuthToken(token) {
+  cachedAuthToken = token || "";
+  await chrome.storage.local.set({ [AUTH_TOKEN_KEY]: cachedAuthToken });
+}
+
+async function authHeaders() {
+  const token = await loadAuthToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 // === Port Discovery ===
 
 async function findSurgePort() {
@@ -93,8 +115,14 @@ async function findSurgePort() {
         signal: AbortSignal.timeout(300),
       });
       if (response.ok) {
-        isConnected = true;
-        return cachedPort;
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await response.json().catch(() => null);
+          if (data && data.status === "ok") {
+            isConnected = true;
+            return cachedPort;
+          }
+        }
       }
     } catch {}
     cachedPort = null;
@@ -108,6 +136,14 @@ async function findSurgePort() {
         signal: AbortSignal.timeout(200),
       });
       if (response.ok) {
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          continue;
+        }
+        const data = await response.json().catch(() => null);
+        if (!data || data.status !== "ok") {
+          continue;
+        }
         cachedPort = port;
         isConnected = true;
         console.log(`[Surge] Found server on port ${port}`);
@@ -138,25 +174,40 @@ async function checkSurgeHealth() {
 async function fetchDownloadList() {
   const port = await findSurgePort();
   if (!port) {
-    return [];
+    isConnected = false;
+    return { list: [], authError: false };
   }
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/list`, {
       method: "GET",
+      headers,
       signal: AbortSignal.timeout(5000),
     });
 
     if (response.ok) {
-      const list = await response.json();
+      isConnected = true;
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        isConnected = false;
+        return { list: [], authError: false };
+      }
+      let list;
+      try {
+        list = await response.json();
+      } catch {
+        isConnected = false;
+        return { list: [], authError: false };
+      }
 
       // Handle null or non-array response
       if (!Array.isArray(list)) {
-        return [];
+        return { list: [], authError: false };
       }
 
       // Calculate ETA for each download
-      return list.map((dl) => {
+      const mapped = list.map((dl) => {
         let eta = null;
         if (dl.status === "downloading" && dl.speed > 0 && dl.total_size > 0) {
           const remaining = dl.total_size - dl.downloaded;
@@ -166,12 +217,43 @@ async function fetchDownloadList() {
         }
         return { ...dl, eta };
       });
+      return { list: mapped, authError: false };
+    } else {
+      if (response.status === 401 || response.status === 403) {
+        isConnected = true;
+        return { list: [], authError: true };
+      }
+      isConnected = false;
+      return { list: [], authError: false };
     }
   } catch (error) {
     console.error("[Surge] Error fetching downloads:", error);
   }
 
-  return [];
+  return { list: [], authError: false };
+}
+
+async function validateAuthToken() {
+  const port = await findSurgePort();
+  if (!port) {
+    isConnected = false;
+    return { ok: false, error: "no_server" };
+  }
+  try {
+    const headers = await authHeaders();
+    const response = await fetch(`http://127.0.0.1:${port}/list`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (response.ok) {
+      isConnected = true;
+      return { ok: true };
+    }
+    return { ok: false, status: response.status };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
 }
 
 // === Download Sending ===
@@ -205,10 +287,12 @@ async function sendToSurge(url, filename, absolutePath) {
     // This also bypasses duplicate warnings since extension handles those
     body.skip_approval = true;
 
+    const auth = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/download`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...auth,
       },
       body: JSON.stringify(body),
     });
@@ -239,8 +323,10 @@ async function pauseDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/pause?id=${id}`, {
       method: "POST",
+      headers,
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
@@ -255,8 +341,10 @@ async function resumeDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/resume?id=${id}`, {
       method: "POST",
+      headers,
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
@@ -271,8 +359,10 @@ async function cancelDownload(id) {
   if (!port) return false;
 
   try {
+    const headers = await authHeaders();
     const response = await fetch(`http://127.0.0.1:${port}/delete?id=${id}`, {
       method: "DELETE",
+      headers,
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
@@ -294,10 +384,10 @@ async function isInterceptEnabled() {
 // Check if URL is already being downloaded by Surge
 async function isDuplicateDownload(url) {
   try {
-    const downloadsList = await fetchDownloadList();
-    if (downloadsList && downloadsList.length > 0) {
+    const { list } = await fetchDownloadList();
+    if (Array.isArray(list) && list.length > 0) {
       const normalizedUrl = url.replace(/\/$/, ""); // Remove trailing slash
-      for (const dl of downloadsList) {
+      for (const dl of list) {
         const normalizedDlUrl = (dl.url || "").replace(/\/$/, "");
         // Flag as duplicate if URL exists in Surge's download list (any status)
         if (normalizedDlUrl === normalizedUrl) {
@@ -590,6 +680,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ enabled });
           break;
         }
+        case "getAuthToken": {
+          const token = await loadAuthToken();
+          sendResponse({ token });
+          break;
+        }
+        case "setAuthToken": {
+          await setAuthToken(message.token || "");
+          sendResponse({ success: true });
+          break;
+        }
+        case "validateAuth": {
+          const result = await validateAuthToken();
+          sendResponse(result);
+          break;
+        }
 
         case "setStatus": {
           await chrome.storage.local.set({
@@ -600,9 +705,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case "getDownloads": {
-          const downloadsList = await fetchDownloadList();
+          const { list, authError } = await fetchDownloadList();
           sendResponse({
-            downloads: downloadsList,
+            downloads: list,
+            authError,
             connected: isConnected,
           });
           break;

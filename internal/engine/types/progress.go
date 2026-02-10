@@ -5,12 +5,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/surge-downloader/surge/internal/utils"
 )
 
 type ProgressState struct {
 	ID            string
 	Downloaded    atomic.Int64
 	TotalSize     int64
+	DestPath      string // Full absolute path
 	StartTime     time.Time
 	ActiveWorkers atomic.Int32
 	Done          atomic.Bool
@@ -156,6 +159,8 @@ func (ps *ProgressState) InitBitmap(totalSize int64, chunkSize int64) {
 		return
 	}
 
+	utils.Debug("InitBitmap: Total=%d, ChunkSize=%d", totalSize, chunkSize)
+
 	if chunkSize <= 0 {
 		return
 	}
@@ -181,6 +186,8 @@ func (ps *ProgressState) RestoreBitmap(bitmap []byte, actualChunkSize int64) {
 		return
 	}
 
+	utils.Debug("RestoreBitmap: Len=%d, ChunkSize=%d", len(bitmap), actualChunkSize)
+
 	ps.ChunkBitmap = bitmap
 	ps.ActualChunkSize = actualChunkSize
 
@@ -192,6 +199,20 @@ func (ps *ProgressState) RestoreBitmap(bitmap []byte, actualChunkSize int64) {
 	if len(ps.ChunkProgress) != numChunks {
 		ps.ChunkProgress = make([]int64, numChunks)
 	}
+}
+
+// SetChunkProgress updates chunk progress array from external sources (e.g. remote events).
+func (ps *ProgressState) SetChunkProgress(progress []int64) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	if len(progress) == 0 {
+		return
+	}
+	if len(ps.ChunkProgress) != len(progress) {
+		ps.ChunkProgress = make([]int64, len(progress))
+	}
+	copy(ps.ChunkProgress, progress)
 }
 
 // SetChunkState sets the 2-bit state for a specific chunk index
@@ -232,11 +253,13 @@ func (ps *ProgressState) UpdateChunkStatus(offset, length int64, status ChunkSta
 	defer ps.mu.Unlock()
 
 	if ps.ActualChunkSize == 0 || len(ps.ChunkBitmap) == 0 {
+		utils.Debug("UpdateChunkStatus skipped: ActualChunkSize=%d, BitmapLen=%d", ps.ActualChunkSize, len(ps.ChunkBitmap))
 		return
 	}
 
 	// Lazily init progress array if missing
 	if len(ps.ChunkProgress) != ps.BitmapWidth {
+		utils.Debug("UpdateChunkStatus: Initializing ChunkProgress array (width=%d)", ps.BitmapWidth)
 		ps.ChunkProgress = make([]int64, ps.BitmapWidth)
 	}
 
@@ -292,6 +315,7 @@ func (ps *ProgressState) UpdateChunkStatus(offset, length int64, status ChunkSta
 			if ps.ChunkProgress[i] >= (chunkEnd - chunkStart) {
 				ps.ChunkProgress[i] = chunkEnd - chunkStart // clamp
 				ps.SetChunkState(i, ChunkCompleted)
+				// utils.Debug("Chunk %d completed (size=%d)", i, ps.ChunkProgress[i])
 			} else {
 				// Partial progress -> Downloading
 				if ps.GetChunkState(i) != ChunkCompleted {
