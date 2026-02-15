@@ -14,13 +14,15 @@ builds:
       - -X github.com/surge-downloader/surge/cmd.Version={{.Version}}
       - -X github.com/surge-downloader/surge/cmd.BuildTime={{.Date}}
 
-changelog:
-  sort: asc
-
+release:
   footer: |
     ---
     **Enjoying Surge?** Consider supporting the project to keep it blazing fast!
     - [Buy Me a Coffee](https://buymeacoffee.com/surge.downloader)
+
+changelog:
+  sort: asc
+
   filters:
     exclude:
       - "^docs:"
