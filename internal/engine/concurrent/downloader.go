@@ -10,8 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/surge-downloader/surge/internal/engine/state"
 	"github.com/surge-downloader/surge/internal/engine/types"
@@ -190,25 +193,12 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 		maxConns = numConns
 	}
 
-	var proxyFunc func(*http.Request) (*url.URL, error)
-	if d.Runtime.ProxyURL != "" {
-		if parsedURL, err := url.Parse(d.Runtime.ProxyURL); err == nil {
-			proxyFunc = http.ProxyURL(parsedURL)
-		} else {
-			// Fallback or log error? For now fallback to environment
-			utils.Debug("Invalid proxy URL %s: %v", d.Runtime.ProxyURL, err)
-			proxyFunc = http.ProxyFromEnvironment
-		}
-	} else {
-		proxyFunc = http.ProxyFromEnvironment
-	}
-
+	// Create base transport
 	transport := &http.Transport{
 		// Connection pooling
 		MaxIdleConns:        types.DefaultMaxIdleConns,
 		MaxIdleConnsPerHost: maxConns + 2, // Slightly more than max to handle bursts
 		MaxConnsPerHost:     maxConns,
-		Proxy:               proxyFunc,
 
 		// Timeouts to prevent hung connections
 		IdleConnTimeout:       types.DefaultIdleConnTimeout,
@@ -226,6 +216,36 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 			Timeout:   types.DialTimeout,
 			KeepAlive: types.KeepAliveDuration,
 		}).DialContext,
+	}
+
+	// Configure proxy (HTTP/HTTPS or SOCKS5)
+	if d.Runtime.ProxyURL != "" {
+		parsedURL, err := url.Parse(d.Runtime.ProxyURL)
+		if err != nil {
+			utils.Debug("Invalid proxy URL %s: %v", d.Runtime.ProxyURL, err)
+			transport.Proxy = http.ProxyFromEnvironment
+		} else {
+			// Check if it's a SOCKS5 proxy
+			if strings.HasPrefix(parsedURL.Scheme, "socks5") {
+				utils.Debug("Using SOCKS5 proxy: %s", d.Runtime.ProxyURL)
+				// Create SOCKS5 dialer
+				dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+				if err != nil {
+					utils.Debug("Failed to create SOCKS5 dialer: %v", err)
+					transport.Proxy = http.ProxyFromEnvironment
+				} else {
+					// Use SOCKS5 dialer for all connections
+					transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+						return dialer.Dial(network, addr)
+					}
+				}
+			} else {
+				// HTTP/HTTPS proxy
+				transport.Proxy = http.ProxyURL(parsedURL)
+			}
+		}
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
 	}
 
 	// Configure TLS settings

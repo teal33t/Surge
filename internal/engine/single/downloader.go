@@ -5,9 +5,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/surge-downloader/surge/internal/engine/types"
 	"github.com/surge-downloader/surge/internal/utils"
@@ -27,17 +32,47 @@ type SingleDownloader struct {
 
 // NewSingleDownloader creates a new single-threaded downloader with all required parameters
 func NewSingleDownloader(id string, progressCh chan<- any, state *types.ProgressState, runtime *types.RuntimeConfig) *SingleDownloader {
-	client := &http.Client{Timeout: 0}
+	transport := &http.Transport{}
+	
+	// Configure proxy if runtime config is provided
+	if runtime != nil && runtime.ProxyURL != "" {
+		parsedURL, err := url.Parse(runtime.ProxyURL)
+		if err != nil {
+			utils.Debug("Single downloader: Invalid proxy URL %s: %v", runtime.ProxyURL, err)
+			transport.Proxy = http.ProxyFromEnvironment
+		} else if strings.HasPrefix(parsedURL.Scheme, "socks5") {
+			utils.Debug("Single downloader: Using SOCKS5 proxy: %s", runtime.ProxyURL)
+			dialer, dialErr := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+			if dialErr != nil {
+				utils.Debug("Single downloader: Failed to create SOCKS5 dialer: %v", dialErr)
+				transport.Proxy = http.ProxyFromEnvironment
+			} else {
+				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return dialer.Dial(network, addr)
+				}
+			}
+		} else {
+			transport.Proxy = http.ProxyURL(parsedURL)
+		}
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
+	}
 	
 	// Configure TLS if runtime config is provided
 	if runtime != nil && runtime.SkipTLSVerification {
 		utils.Debug("Single downloader: TLS verification disabled")
-		transport := &http.Transport{
-			TLSClientConfig: &tls.Config{
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{
 				InsecureSkipVerify: true,
-			},
+			}
+		} else {
+			transport.TLSClientConfig.InsecureSkipVerify = true
 		}
-		client.Transport = transport
+	}
+	
+	client := &http.Client{
+		Timeout:   0,
+		Transport: transport,
 	}
 	
 	return &SingleDownloader{

@@ -5,11 +5,15 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/surge-downloader/surge/internal/engine/types"
 	"github.com/surge-downloader/surge/internal/utils"
@@ -37,8 +41,35 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 	var err error
 
 	// Create a client that preserves headers on redirects (for authenticated downloads)
+	transport := &http.Transport{}
+	
+	// Configure proxy if runtime config is provided
+	if runtime != nil && runtime.ProxyURL != "" {
+		parsedURL, parseErr := url.Parse(runtime.ProxyURL)
+		if parseErr != nil {
+			utils.Debug("Probe: Invalid proxy URL %s: %v", runtime.ProxyURL, parseErr)
+			transport.Proxy = http.ProxyFromEnvironment
+		} else if strings.HasPrefix(parsedURL.Scheme, "socks5") {
+			utils.Debug("Probe: Using SOCKS5 proxy: %s", runtime.ProxyURL)
+			dialer, dialErr := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+			if dialErr != nil {
+				utils.Debug("Probe: Failed to create SOCKS5 dialer: %v", dialErr)
+				transport.Proxy = http.ProxyFromEnvironment
+			} else {
+				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return dialer.Dial(network, addr)
+				}
+			}
+		} else {
+			transport.Proxy = http.ProxyURL(parsedURL)
+		}
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
+	}
+	
 	client := &http.Client{
-		Timeout: types.ProbeTimeout,
+		Timeout:   types.ProbeTimeout,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
@@ -59,17 +90,12 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 	// Configure TLS if runtime config is provided
 	if runtime != nil && runtime.SkipTLSVerification {
 		utils.Debug("Probe: TLS verification disabled")
-		if transport, ok := client.Transport.(*http.Transport); ok {
+		if transport.TLSClientConfig == nil {
 			transport.TLSClientConfig = &tls.Config{
 				InsecureSkipVerify: true,
 			}
 		} else {
-			// Create new transport with TLS config
-			client.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			}
+			transport.TLSClientConfig.InsecureSkipVerify = true
 		}
 	}
 
