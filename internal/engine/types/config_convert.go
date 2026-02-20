@@ -16,5 +16,7 @@ func ConvertRuntimeConfig(rc *config.RuntimeConfig) *RuntimeConfig {
 		SlowWorkerGracePeriod: rc.SlowWorkerGracePeriod,
 		StallTimeout:          rc.StallTimeout,
 		SpeedEmaAlpha:         rc.SpeedEmaAlpha,
+		SkipTLSVerification:   rc.SkipTLSVerification,
+		PreserveURLPath:       rc.PreserveURLPath,
 	}
 }

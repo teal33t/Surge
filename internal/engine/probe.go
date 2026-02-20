@@ -58,6 +58,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 
 	// Configure TLS if runtime config is provided
 	if runtime != nil && runtime.SkipTLSVerification {
+		utils.Debug("Probe: TLS verification disabled")
 		if transport, ok := client.Transport.(*http.Transport); ok {
 			transport.TLSClientConfig = &tls.Config{
 				InsecureSkipVerify: true,

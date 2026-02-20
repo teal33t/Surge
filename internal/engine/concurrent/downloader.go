@@ -229,10 +229,11 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 	}
 
 	// Configure TLS settings
-	if d.Runtime.SkipTLSVerification {
+	if d.Runtime != nil && d.Runtime.SkipTLSVerification {
 		transport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}
+		utils.Debug("TLS verification disabled for this download")
 	}
 
 	return &http.Client{

@@ -23,6 +23,8 @@ func TestConvertRuntimeConfig_AllFieldsCopied(t *testing.T) {
 		SlowWorkerGracePeriod: 10 * time.Second,
 		StallTimeout:          7 * time.Second,
 		SpeedEmaAlpha:         0.4,
+		SkipTLSVerification:   true,
+		PreserveURLPath:       true,
 	}
 
 	result := ConvertRuntimeConfig(input)
@@ -63,6 +65,12 @@ func TestConvertRuntimeConfig_AllFieldsCopied(t *testing.T) {
 	}
 	if result.SpeedEmaAlpha != input.SpeedEmaAlpha {
 		t.Errorf("SpeedEmaAlpha: got %f, want %f", result.SpeedEmaAlpha, input.SpeedEmaAlpha)
+	}
+	if result.SkipTLSVerification != input.SkipTLSVerification {
+		t.Errorf("SkipTLSVerification: got %v, want %v", result.SkipTLSVerification, input.SkipTLSVerification)
+	}
+	if result.PreserveURLPath != input.PreserveURLPath {
+		t.Errorf("PreserveURLPath: got %v, want %v", result.PreserveURLPath, input.PreserveURLPath)
 	}
 }
 

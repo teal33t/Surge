@@ -31,6 +31,7 @@ func NewSingleDownloader(id string, progressCh chan<- any, state *types.Progress
 	
 	// Configure TLS if runtime config is provided
 	if runtime != nil && runtime.SkipTLSVerification {
+		utils.Debug("Single downloader: TLS verification disabled")
 		transport := &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
