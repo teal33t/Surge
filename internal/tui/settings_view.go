@@ -253,6 +253,7 @@ func (m RootModel) getSettingsValues(category string) map[string]interface{} {
 		values["extension_prompt"] = m.Settings.General.ExtensionPrompt
 		values["auto_resume"] = m.Settings.General.AutoResume
 		values["skip_update_check"] = m.Settings.General.SkipUpdateCheck
+		values["preserve_url_path"] = m.Settings.General.PreserveURLPath
 
 		values["clipboard_monitor"] = m.Settings.General.ClipboardMonitor
 		values["theme"] = m.Settings.General.Theme
@@ -263,9 +264,11 @@ func (m RootModel) getSettingsValues(category string) map[string]interface{} {
 
 		values["max_concurrent_downloads"] = m.Settings.Network.MaxConcurrentDownloads
 		values["user_agent"] = m.Settings.Network.UserAgent
+		values["proxy_url"] = m.Settings.Network.ProxyURL
 		values["sequential_download"] = m.Settings.Network.SequentialDownload
 		values["min_chunk_size"] = m.Settings.Network.MinChunkSize
 		values["worker_buffer_size"] = m.Settings.Network.WorkerBufferSize
+		values["skip_tls_verification"] = m.Settings.Network.SkipTLSVerification
 	case "Performance":
 		values["max_task_retries"] = m.Settings.Performance.MaxTaskRetries
 		values["slow_worker_threshold"] = m.Settings.Performance.SlowWorkerThreshold
@@ -314,6 +317,8 @@ func (m *RootModel) setGeneralSetting(key, value, typ string) error {
 		m.Settings.General.AutoResume = !m.Settings.General.AutoResume
 	case "skip_update_check":
 		m.Settings.General.SkipUpdateCheck = !m.Settings.General.SkipUpdateCheck
+	case "preserve_url_path":
+		m.Settings.General.PreserveURLPath = !m.Settings.General.PreserveURLPath
 	case "clipboard_monitor":
 		m.Settings.General.ClipboardMonitor = !m.Settings.General.ClipboardMonitor
 
@@ -370,6 +375,8 @@ func (m *RootModel) setNetworkSetting(key, value, typ string) error {
 		}
 	case "user_agent":
 		m.Settings.Network.UserAgent = value
+	case "proxy_url":
+		m.Settings.Network.ProxyURL = value
 	case "sequential_download":
 		// Toggle logic handled by generic bool toggle in Update, but just in case
 		if value == "" {
@@ -378,6 +385,13 @@ func (m *RootModel) setNetworkSetting(key, value, typ string) error {
 			// For programmatic setting if ever needed
 			b, _ := strconv.ParseBool(value)
 			m.Settings.Network.SequentialDownload = b
+		}
+	case "skip_tls_verification":
+		if value == "" {
+			m.Settings.Network.SkipTLSVerification = !m.Settings.Network.SkipTLSVerification
+		} else {
+			b, _ := strconv.ParseBool(value)
+			m.Settings.Network.SkipTLSVerification = b
 		}
 	case "min_chunk_size":
 		// Parse as MB and convert to bytes
