@@ -31,6 +31,7 @@ func readActivePort() int {
 }
 
 // readURLsFromFile reads URLs from a file, one per line
+// Handles large files efficiently with progress indication
 func readURLsFromFile(filepath string) ([]string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -38,15 +39,44 @@ func readURLsFromFile(filepath string) ([]string, error) {
 	}
 	defer func() { _ = file.Close() }()
 
+	// Get file size for progress estimation
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+	fileSize := fileInfo.Size()
+
 	var urls []string
 	scanner := bufio.NewScanner(file)
+	
+	// Increase buffer size for long URLs (default is 64KB, increase to 1MB)
+	const maxCapacity = 1024 * 1024 // 1MB per line
+	buf := make([]byte, maxCapacity)
+	scanner.Buffer(buf, maxCapacity)
+	
+	lineCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.HasPrefix(line, "#") {
 			urls = append(urls, line)
 		}
+		lineCount++
+		
+		// Progress indication for large files (every 10000 lines)
+		if fileSize > 10*1024*1024 && lineCount%10000 == 0 {
+			fmt.Fprintf(os.Stderr, "\rReading batch file: %d URLs loaded...", len(urls))
+		}
 	}
-	return urls, scanner.Err()
+	
+	if fileSize > 10*1024*1024 {
+		fmt.Fprintf(os.Stderr, "\rReading batch file: %d URLs loaded... Done!\n", len(urls))
+	}
+	
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	
+	return urls, nil
 }
 
 // ParseURLArg parses a command line argument that might contain comma-separated mirrors

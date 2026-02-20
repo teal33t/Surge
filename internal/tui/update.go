@@ -80,9 +80,23 @@ func readURLsFromFile(filepath string) ([]string, error) {
 		}
 	}()
 
+	// Get file size for large file handling
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+	fileSize := fileInfo.Size()
+
 	var urls []string
 	seen := make(map[string]bool)
 	scanner := bufio.NewScanner(file)
+	
+	// Increase buffer size for long URLs (default is 64KB, increase to 1MB)
+	const maxCapacity = 1024 * 1024 // 1MB per line
+	buf := make([]byte, maxCapacity)
+	scanner.Buffer(buf, maxCapacity)
+	
+	lineCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		// Skip empty lines and comments
@@ -93,6 +107,12 @@ func readURLsFromFile(filepath string) ([]string, error) {
 				seen[normalized] = true
 				urls = append(urls, line)
 			}
+		}
+		lineCount++
+		
+		// For very large files, log progress
+		if fileSize > 10*1024*1024 && lineCount%10000 == 0 {
+			utils.Debug("Batch import: %d URLs loaded from %d lines", len(urls), lineCount)
 		}
 	}
 
