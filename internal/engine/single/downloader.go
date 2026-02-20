@@ -2,6 +2,7 @@ package single
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,8 +27,20 @@ type SingleDownloader struct {
 
 // NewSingleDownloader creates a new single-threaded downloader with all required parameters
 func NewSingleDownloader(id string, progressCh chan<- any, state *types.ProgressState, runtime *types.RuntimeConfig) *SingleDownloader {
+	client := &http.Client{Timeout: 0}
+	
+	// Configure TLS if runtime config is provided
+	if runtime != nil && runtime.SkipTLSVerification {
+		transport := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+		client.Transport = transport
+	}
+	
 	return &SingleDownloader{
-		Client:       &http.Client{Timeout: 0},
+		Client:       client,
 		ProgressChan: progressCh,
 		ID:           id,
 		State:        state,

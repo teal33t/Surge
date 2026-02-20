@@ -228,6 +228,13 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 		}).DialContext,
 	}
 
+	// Configure TLS settings
+	if d.Runtime.SkipTLSVerification {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+
 	return &http.Client{
 		Transport: transport,
 		// Preserve headers on redirects for authenticated downloads

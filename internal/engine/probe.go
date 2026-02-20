@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,8 @@ type ProbeResult struct {
 
 // ProbeServer sends GET with Range: bytes=0-0 to determine server capabilities
 // headers is optional - pass nil for non-authenticated probes
-func ProbeServer(ctx context.Context, rawurl string, filenameHint string, headers map[string]string) (*ProbeResult, error) {
+// runtime is optional - pass nil to use default settings
+func ProbeServer(ctx context.Context, rawurl string, filenameHint string, headers map[string]string, runtime *types.RuntimeConfig) (*ProbeResult, error) {
 	utils.Debug("Probing server: %s", rawurl)
 
 	var resp *http.Response
@@ -52,6 +54,22 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 			}
 			return nil
 		},
+	}
+
+	// Configure TLS if runtime config is provided
+	if runtime != nil && runtime.SkipTLSVerification {
+		if transport, ok := client.Transport.(*http.Transport); ok {
+			transport.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+			}
+		} else {
+			// Create new transport with TLS config
+			client.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			}
+		}
 	}
 
 	// Retry logic for probe request
@@ -177,7 +195,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 }
 
 // ProbeMirrors concurrently checks a list of mirrors and returns valid ones and errors
-func ProbeMirrors(ctx context.Context, mirrors []string) (valid []string, errors map[string]error) {
+func ProbeMirrors(ctx context.Context, mirrors []string, runtime *types.RuntimeConfig) (valid []string, errors map[string]error) {
 	// Deduplicate
 	unique := make(map[string]bool)
 	for _, m := range mirrors {
@@ -205,7 +223,7 @@ func ProbeMirrors(ctx context.Context, mirrors []string) (valid []string, errors
 			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
-			result, err := ProbeServer(probeCtx, target, "", nil)
+			result, err := ProbeServer(probeCtx, target, "", nil, runtime)
 
 			mu.Lock()
 			defer mu.Unlock()

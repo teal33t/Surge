@@ -82,7 +82,7 @@ func uniqueFilePath(path string) string {
 func TUIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 	// Probe server once to get all metadata
 	utils.Debug("TUIDownload: Probing server... %s", cfg.URL)
-	probe, err := engine.ProbeServer(ctx, cfg.URL, cfg.Filename, cfg.Headers)
+	probe, err := engine.ProbeServer(ctx, cfg.URL, cfg.Filename, cfg.Headers, cfg.Runtime)
 	if err != nil {
 		utils.Debug("TUIDownload: Probe failed: %v\n", err)
 		return err
@@ -111,7 +111,25 @@ func TUIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		if cfg.Filename != "" {
 			filename = cfg.Filename
 		}
-		destPath = filepath.Join(cfg.OutputPath, filename)
+		
+		// If PreserveURLPath is enabled, create subdirectories based on URL path
+		if cfg.Runtime != nil && cfg.Runtime.PreserveURLPath {
+			if urlPath, err := utils.ExtractURLPath(cfg.URL); err == nil && urlPath != "" {
+				// Create the full path including URL structure
+				destPath = filepath.Join(cfg.OutputPath, urlPath, filename)
+				// Ensure the directory exists
+				if mkErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkErr != nil {
+					utils.Debug("Failed to create URL path directory: %v", mkErr)
+					// Fallback to simple path if directory creation fails
+					destPath = filepath.Join(cfg.OutputPath, filename)
+				}
+			} else {
+				// Fallback to simple path if URL parsing fails
+				destPath = filepath.Join(cfg.OutputPath, filename)
+			}
+		} else {
+			destPath = filepath.Join(cfg.OutputPath, filename)
+		}
 	}
 
 	// Local mirrors slice to avoid modifying config (race condition)
@@ -197,7 +215,7 @@ func TUIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 			utils.Debug("Probing %d mirrors", len(mirrors))
 			// Always check primary + mirrors to ensure we are using the best set
 			allToCheck := append([]string{cfg.URL}, mirrors...)
-			valid, errs := engine.ProbeMirrors(ctx, allToCheck)
+			valid, errs := engine.ProbeMirrors(ctx, allToCheck, cfg.Runtime)
 
 			// Log errors
 			for u, e := range errs {

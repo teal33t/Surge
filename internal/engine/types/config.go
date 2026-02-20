@@ -80,6 +80,8 @@ type RuntimeConfig struct {
 	SlowWorkerGracePeriod time.Duration
 	StallTimeout          time.Duration
 	SpeedEmaAlpha         float64
+	SkipTLSVerification   bool
+	PreserveURLPath       bool
 }
 
 // GetUserAgent returns the configured user agent or the default

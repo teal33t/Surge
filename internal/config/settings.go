@@ -21,6 +21,7 @@ type GeneralSettings struct {
 	ExtensionPrompt    bool   `json:"extension_prompt"`
 	AutoResume         bool   `json:"auto_resume"`
 	SkipUpdateCheck    bool   `json:"skip_update_check"`
+	PreserveURLPath    bool   `json:"preserve_url_path"`
 
 	ClipboardMonitor  bool `json:"clipboard_monitor"`
 	Theme             int  `json:"theme"`
@@ -42,6 +43,7 @@ type NetworkSettings struct {
 	SequentialDownload     bool   `json:"sequential_download"`
 	MinChunkSize           int64  `json:"min_chunk_size"`
 	WorkerBufferSize       int    `json:"worker_buffer_size"`
+	SkipTLSVerification    bool   `json:"skip_tls_verification"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshalling for Settings.
@@ -100,6 +102,7 @@ func GetSettingsMetadata() map[string][]SettingMeta {
 			{Key: "extension_prompt", Label: "Extension Prompt", Description: "Prompt for confirmation when adding downloads via browser extension.", Type: "bool"},
 			{Key: "auto_resume", Label: "Auto Resume", Description: "Automatically resume paused downloads on startup.", Type: "bool"},
 			{Key: "skip_update_check", Label: "Skip Update Check", Description: "Disable automatic check for new versions on startup.", Type: "bool"},
+			{Key: "preserve_url_path", Label: "Preserve URL Path", Description: "Preserve the URL path structure when saving files (e.g., example.com/a/b/file.zip → download_dir/example.com/a/b/file.zip).", Type: "bool"},
 
 			{Key: "clipboard_monitor", Label: "Clipboard Monitor", Description: "Watch clipboard for URLs and prompt to download them.", Type: "bool"},
 			{Key: "theme", Label: "App Theme", Description: "UI Theme (System, Light, Dark).", Type: "int"},
@@ -113,6 +116,7 @@ func GetSettingsMetadata() map[string][]SettingMeta {
 			{Key: "sequential_download", Label: "Sequential Download", Description: "Download pieces in order (Streaming Mode). May be slower.", Type: "bool"},
 			{Key: "min_chunk_size", Label: "Min Chunk Size", Description: "Minimum download chunk size in MB (e.g., 2).", Type: "int64"},
 			{Key: "worker_buffer_size", Label: "Worker Buffer Size", Description: "I/O buffer size per worker in KB (e.g., 512).", Type: "int"},
+			{Key: "skip_tls_verification", Label: "Skip TLS Verification", Description: "Skip TLS certificate verification (insecure, use only for trusted sources with certificate issues).", Type: "bool"},
 		},
 		"Performance": {
 			{Key: "max_task_retries", Label: "Max Task Retries", Description: "Number of times to retry a failed chunk before giving up.", Type: "int"},
@@ -161,6 +165,7 @@ func DefaultSettings() *Settings {
 			WarnOnDuplicate:    true,
 			ExtensionPrompt:    false,
 			AutoResume:         false,
+			PreserveURLPath:    false,
 
 			ClipboardMonitor:  true,
 			Theme:             ThemeAdaptive,
@@ -173,6 +178,7 @@ func DefaultSettings() *Settings {
 			SequentialDownload:     false,
 			MinChunkSize:           2 * MB,
 			WorkerBufferSize:       512 * KB,
+			SkipTLSVerification:    false,
 		},
 		Performance: PerformanceSettings{
 			MaxTaskRetries:        3,
@@ -247,6 +253,8 @@ type RuntimeConfig struct {
 	SlowWorkerGracePeriod time.Duration
 	StallTimeout          time.Duration
 	SpeedEmaAlpha         float64
+	SkipTLSVerification   bool
+	PreserveURLPath       bool
 }
 
 // ToRuntimeConfig creates a RuntimeConfig from user Settings
@@ -263,5 +271,7 @@ func (s *Settings) ToRuntimeConfig() *RuntimeConfig {
 		SlowWorkerGracePeriod: s.Performance.SlowWorkerGracePeriod,
 		StallTimeout:          s.Performance.StallTimeout,
 		SpeedEmaAlpha:         s.Performance.SpeedEmaAlpha,
+		SkipTLSVerification:   s.Network.SkipTLSVerification,
+		PreserveURLPath:       s.General.PreserveURLPath,
 	}
 }
